@@ -878,7 +878,8 @@ elif menu == "❤️ Reproduction & Alertes":
                                         st.write(f"• {row.get('ID_Brebis', 'N/A')} avec {row.get('ID_Belier', 'N/A')}: J{jours}")
                                 except:
                                     continue
-                               except:
-                    continue
-    except: Exception as e:    # ← AVEC : et indenté correctement
-        st.error(f"Erreur page reproduction: {e}")
+                              except:
+            continue
+    # Fin de la boucle for
+except Exception as e:
+    st.error(f"Erreur page reproduction: {e}")
