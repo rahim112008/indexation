@@ -880,5 +880,5 @@ elif menu == "❤️ Reproduction & Alertes":
                                     continue
                                except:
                     continue
-    except Exception as e:    # ← AVEC : et indenté correctement
+    except: Exception as e:    # ← AVEC : et indenté correctement
         st.error(f"Erreur page reproduction: {e}")
