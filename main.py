@@ -764,7 +764,7 @@ elif menu == "🧬 Performance Béliers":
                                     title="Carte Génétique: Croissance vs Musculation")
                     if 'GMQ' in df_filt.columns:
                         fig.add_vline(x=250, line_dash="dash", annotation_text="Seuil GMQ élite")
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, use_container_width=True)     
                 else:
                     st.info("Données insuffisantes pour le graphique")
                 
@@ -867,19 +867,20 @@ elif menu == "❤️ Reproduction & Alertes":
                     mask = (st.session_state.saillies_db['Gest_Confirme'] == 'Oui') 
                     if 'Date_Agnelage_Prevu' in st.session_state.saillies_db.columns:
                         imminent = st.session_state.saillies_db[mask]
-                        if not imminent.empty:
-                            st.divider()
-                            st.subheader("🚨 Agnelages Imminents")
-                            for _, row in imminent.iterrows():
-                                try:
-                                    date_prev = safe_date_parse(row.get('Date_Agnelage_Prevu'))
-                                    jours = (date_prev - today).days
-                                    if -7 <= jours <= 30:
-                                        st.write(f"• {row.get('ID_Brebis', 'N/A')} avec {row.get('ID_Belier', 'N/A')}: J{jours}")
-                                except:
-                                    continue
-                              except:
-            continue
-    # Fin de la boucle for
-except Exception as e:
-    st.error(f"Erreur page reproduction: {e}")
+                        # --- Bloc de calcul des performances reproducteurs ---
+        try:
+            # On tente de calculer les statistiques si les données existent
+            if not st.session_state.agneaux_db.empty:
+                # Ton calcul de performance ici...
+                pass 
+        except Exception as e:
+            # Si le calcul échoue, on affiche un message discret ou on passe
+            st.warning(f"Calcul des performances en attente : {e}")
+            
+    except Exception as e:
+        # Erreur générale de la page
+        st.error(f"Erreur d'affichage de la page Reproduction : {e}")
+
+# --- 9. PAGE EXPORT (Exemple de fin de structure) ---
+elif menu == "💾 Export":
+    st.title("💾 Sauvegarde des données")
