@@ -33,44 +33,28 @@ def init_db():
     conn.commit()
     conn.close()
 
-# ============================================================
-# 2. LOGIQUE SCIENTIFIQUE : INDICES & PRÉDICTIONS
-# ============================================================
+# --- NOUVELLE LOGIQUE D'INDEXATION PARAMÉTRABLE ---
 
-def calculer_indices_scientifiques(row):
-    """
-    Calcul des indices selon les standards INRA / Zootechniques.
-    Estimation de la carcasse basée sur l'Indice de Conformation (IC) 
-    et le Volume Corporel Estimé (VCE).
-    """
-    # 1. GMQ (en g/j)
-    gmq_10_30 = ((row['p30'] - row['p10']) / 20) * 1000 if row['p30'] and row['p10'] else 0
-    gmq_30_70 = ((row['p70'] - row['p30']) / 40) * 1000 if row['p70'] and row['p30'] else 0
-    gmq_global = ((row['p70'] - row['p_naiss']) / 70) * 1000 if row['p70'] else 0
-
-    # 2. Estimation de la Viande et du Gras (Modèle Linéaire Morphométrique)
-    # L'indice de compacité (Poids/Longueur) est corrélé au rendement carcasse.
-    compacite = row['p70'] / row['l_corps'] if row['l_corps'] > 0 else 0
+def calculer_indices_scientifiques(row, mode="Boucherie"):
+    # ... (gardez vos calculs de GMQ, viande et gras précédents) ...
     
-    # Estimation % Viande Maigre (Inspiré des équations de prédiction de surface du muscle longissimus)
-    # Plus le périmètre thoracique et la largeur de poitrine sont élevés, plus le rendement est fort.
-    perc_viande = 50 + (0.5 * row['l_poitrine']) + (0.2 * row['p_thoracique']) - (0.1 * row['h_garrot'])
+    if mode == "Boucherie":
+        # Priorité : Croissance et Muscle
+        w_gmq = 0.40   # 40% sur le GMQ 30-70
+        w_morpho = 0.30 # 30% sur la conformation
+        w_viande = 0.30 # 30% sur le rendement viande
+    else:
+        # Priorité : Conformation et Réserves (Gras)
+        w_gmq = 0.20
+        w_morpho = 0.50
+        w_viande = 0.30 # Ici on peut aussi intégrer le gras
+
+    # Calcul de l'index final
+    index_elite = (row['gmq_30_70'] * w_gmq * 0.1) + \
+                  (score_morpho * w_morpho) + \
+                  (perc_viande * w_viande)
     
-    # Estimation % Gras (Le gras est positivement corrélé au périmètre thoracique et au poids au sevrage)
-    perc_gras = (row['p_thoracique'] * 0.15) + (row['p70'] * 0.1) - 10
-
-    # 3. Score d'Élite (Indexation)
-    # Pondération : 30% GMQ30-70, 40% Morpho, 20% Viande, 10% Poids J70
-    score_morpho = (row['h_garrot'] * 0.2 + row['l_corps'] * 0.4 + row['p_thoracique'] * 0.4)
-    index_elite = (gmq_30_70 * 0.03) + (score_morpho * 0.4) + (perc_viande * 0.2) + (row['p70'] * 0.1)
-
-    return {
-        "gmq_30_70": round(gmq_30_70, 1),
-        "gmq_global": round(gmq_global, 1),
-        "viande_maigre": round(perc_viande, 1),
-        "gras": round(perc_gras, 1),
-        "index_elite": round(index_elite, 2)
-    }
+    return round(index_elite, 2)
 
 # ============================================================
 # 3. GÉNÉRATION DE DONNÉES DE DÉMONSTRATION (20 INDIVIDUS)
