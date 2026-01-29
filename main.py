@@ -3,20 +3,28 @@ import pandas as pd
 import numpy as np
 import sqlite3
 import random
-from datetime import datetime, timedelta
 import plotly.express as px
 import plotly.graph_objects as go
+from datetime import datetime, timedelta
 import io
 
-# --- 1. CONFIGURATION ---
+# --- 1. CONFIGURATION & STYLE ---
 st.set_page_config(page_title="Expert Selector Ultra", layout="wide", page_icon="🐏")
+
+st.markdown("""
+    <style>
+    .stMetric { background-color: #111111; color: white; padding: 15px; border-radius: 10px; border: 1px solid #333; }
+    div[data-testid="stMetricValue"] { color: #00ff00 !important; }
+    .alert-card { padding: 10px; background-color: #331a00; border-left: 5px solid #ff9900; color: #ffcc00; margin-bottom: 5px; border-radius: 5px; font-weight: bold; }
+    </style>
+    """, unsafe_allow_html=True)
 
 DB_NAME = "expert_ultra_final.db"
 
 def get_db_connection():
     return sqlite3.connect(DB_NAME, check_same_thread=False)
 
-# --- 2. FONCTIONS DE CALCUL & DÉMO ---
+# --- 2. FONCTIONS SCIENTIFIQUES & DÉMO ---
 def calculer_metrics(row, mode="Viande"):
     gmq = ((row['p70'] - row['p30']) / 40) * 1000 if (row['p70'] > 0 and row['p30'] > 0) else 0
     rendement = 52.4 + (0.35 * row['l_poitrine']) + (0.12 * row['p_thoracique']) - (0.08 * row['h_garrot'])
@@ -34,15 +42,14 @@ def generer_donnees_demo(n=500):
         a_id = f"DEMO-{1000 + i}"
         race = random.choice(races)
         date_n = (datetime.now() - timedelta(days=random.randint(100, 600))).strftime('%Y-%m-%d')
-        # Simulation réaliste avec corrélations naturelles
         p10 = round(random.uniform(3.5, 6.5), 1)
         p30 = round(p10 * 2.5 + random.uniform(-1, 1), 1)
         p70 = round(p30 * 1.8 + random.uniform(-2, 2), 1)
-        cc = round(7 + (p70 * 0.1) + random.uniform(-0.5, 0.5), 1) # Corrélation Canon/Poids
+        cc = round(7 + (p70 * 0.1) + random.uniform(-0.5, 0.5), 1)
         hg = round(60 + (p70 * 0.4) + random.uniform(-2, 2), 1)
         pt = round(hg * 1.2, 1)
         lp = round(cc * 2, 1)
-        c.execute("INSERT OR REPLACE INTO beliers VALUES (?,?,?,?,?)", (a_id, race, date_n, "Viande", "Dents de lait"))
+        c.execute("INSERT OR REPLACE INTO beliers VALUES (?,?,?,?,?)", (a_id, race, date_n, "Viande", "2 Dents"))
         c.execute("INSERT OR REPLACE INTO mesures VALUES (?,?,?,?,?,?,?,?,?)", (a_id, p10, p30, p70, hg, 80.0, pt, lp, cc))
     conn.commit()
     conn.close()
@@ -60,17 +67,19 @@ init_db()
 
 # --- 4. NAVIGATION & SIDEBAR ---
 st.sidebar.title("💎 Selector Ultra")
-if st.sidebar.button("🚀 Générer 500 Sujets (DÉMO)"):
+if st.sidebar.button("🚀 GÉNÉRER 500 SUJETS"):
     generer_donnees_demo(500)
     st.sidebar.success("500 sujets créés !")
     st.rerun()
 
-if st.sidebar.button("🗑️ Vider la base"):
+if st.sidebar.button("🗑️ VIDER LA BASE"):
     conn = get_db_connection()
     conn.execute("DELETE FROM beliers"); conn.execute("DELETE FROM mesures"); conn.commit()
     st.sidebar.warning("Base vidée.")
     st.rerun()
 
+st.sidebar.divider()
+obj_selection = st.sidebar.selectbox("🎯 Objectif de Sélection", ["Viande", "Rusticité"])
 menu = st.sidebar.radio("Navigation", ["🏠 Dashboard", "📈 Analyse Scientifique", "✍️ Saisie Manuelle", "📥 Import/Export"])
 
 # Chargement données
@@ -79,46 +88,67 @@ df = pd.read_sql("SELECT * FROM beliers JOIN mesures ON beliers.id = mesures.id_
 conn.close()
 
 if not df.empty:
-    df[['GMQ', 'Rendement', 'Index']] = df.apply(lambda x: pd.Series(calculer_metrics(x)), axis=1)
+    df[['GMQ', 'Rendement', 'Index']] = df.apply(lambda x: pd.Series(calculer_metrics(x, obj_selection)), axis=1)
 
-# --- PAGE : ANALYSE SCIENTIFIQUE ---
-if menu == "📈 Analyse Scientifique":
-    st.title("🔬 Laboratoire d'Analyse des Corrélations")
-    
-    if df.empty:
-        st.warning("Veuillez générer ou saisir des données pour voir l'analyse.")
+# --- 5. PAGES ---
+
+if menu == "🏠 Dashboard":
+    st.title("📊 Registre du Troupeau")
+    if not df.empty:
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Effectif Total", len(df))
+        c2.metric("GMQ Moyen", f"{df['GMQ'].mean().round(1)} g/j")
+        c3.metric("Moyenne Canon", f"{df['c_canon'].mean().round(2)} cm")
+        
+        st.dataframe(df[['id', 'race', 'p70', 'c_canon', 'GMQ', 'Index']].sort_values('Index', ascending=False), use_container_width=True)
     else:
-        # 1. Matrice de Corrélation Globale
-        st.subheader("📊 Matrice de Corrélation Globale")
+        st.info("La base est vide. Utilisez le bouton 'Générer' à gauche pour tester.")
+
+elif menu == "📈 Analyse Scientifique":
+    st.title("🔬 Laboratoire d'Analyse")
+    if df.empty:
+        st.warning("Aucune donnée disponible.")
+    else:
+        # Matrice
         cols_ana = ['p10', 'p30', 'p70', 'h_garrot', 'p_thoracique', 'l_poitrine', 'c_canon', 'GMQ']
-        corr = df[cols_ana].corr()
-        fig_corr = px.imshow(corr, text_auto=True, color_continuous_scale='RdBu_r', title="Influence des variables entre elles")
+        st.subheader("📊 Influence des variables")
+        fig_corr = px.imshow(df[cols_ana].corr(), text_auto=True, color_continuous_scale='RdBu_r')
         st.plotly_chart(fig_corr, use_container_width=True)
-        
 
+        # Top Impacts
         st.divider()
-
-        # 2. Analyse Séparée par Poids
-        st.subheader("🔍 Analyse détaillée par stade de croissance")
-        tab1, tab2, tab3 = st.tabs(["🍼 Corrélation J10", "🌾 Corrélation J30", "⚖️ Corrélation J70"])
+        st.subheader("🏆 Classement des impacts sur le Poids Final (J70)")
+        influences = df[cols_ana].corr()['p70'].abs().drop('p70').sort_values(ascending=False)
         
-        with tab1:
-            st.write("Le poids à 10 jours dépend principalement de la valeur laitière de la mère.")
-            var_x = st.selectbox("Comparer P10 avec :", ['c_canon', 'h_garrot', 'p_thoracique'], key="j10")
-            fig1 = px.scatter(df, x=var_x, y="p10", color="race", trendline="ols", title=f"Lien entre {var_x} et Poids J10")
-            st.plotly_chart(fig1, use_container_width=True)
+        noms_clairs = {'c_canon': '🦴 Canon', 'p_thoracique': '🫁 Thorax', 'h_garrot': '📏 Hauteur', 'p30': '📈 Poids J30', 'l_poitrine': '🥩 Poitrine', 'p10': '🍼 Poids J10', 'GMQ': '🚀 Croissance'}
+        rank_df = pd.DataFrame({"Critère": [noms_clairs.get(x, x) for x in influences.index], "Force (%)": (influences.values * 100).round(1)})
+        
+        col_t, col_g = st.columns([1, 2])
+        col_t.table(rank_df)
+        col_g.plotly_chart(px.bar(rank_df, x="Force (%)", y="Critère", orientation='h', color="Force (%)"), use_container_width=True)
 
-        with tab2:
-            st.write("Le poids à 30 jours montre le démarrage de l'autonomie de l'agneau.")
-            var_x2 = st.selectbox("Comparer P30 avec :", ['c_canon', 'h_garrot', 'p_thoracique', 'l_poitrine'], key="j30")
-            fig2 = px.scatter(df, x=var_x2, y="p30", color="race", trendline="ols", title=f"Lien entre {var_x2} et Poids J30")
-            st.plotly_chart(fig2, use_container_width=True)
+elif menu == "✍️ Saisie Manuelle":
+    st.title("✍️ Saisie de Précision")
+    with st.form("form_complet"):
+        c1, c2 = st.columns(2)
+        with c1:
+            m_id = st.text_input("ID Animal")
+            m_race = st.selectbox("Race", ["Ouled Djellal", "Rembi", "Hamra"])
+            m_methode = st.radio("Âge :", ["Date", "Dents"])
+            m_val = st.date_input("Date") if m_methode == "Date" else st.selectbox("Dents", ["Dents de lait", "2 Dents", "4 Dents", "6 Dents", "8 Dents"])
+            p10, p30, p70 = st.number_input("Poids J10"), st.number_input("Poids J30"), st.number_input("Poids J70")
+        with c2:
+            hg, pt, lp, lc, cc = st.number_input("Hauteur Garrot"), st.number_input("Périm. Thoracique"), st.number_input("Largeur Poitrine"), st.number_input("Long. Corps"), st.number_input("Circonf. Canon")
+        
+        if st.form_submit_button("💾 Enregistrer"):
+            conn = get_db_connection()
+            conn.execute("INSERT OR REPLACE INTO beliers VALUES (?,?,?,?,?)", (m_id, m_race, str(m_val), obj_selection, str(m_val)))
+            conn.execute("INSERT OR REPLACE INTO mesures VALUES (?,?,?,?,?,?,?,?,?)", (m_id, p10, p30, p70, hg, lc, pt, lp, cc))
+            conn.commit()
+            st.success("Enregistré !"); st.rerun()
 
-        with tab3:
-            st.write("À 70 jours, la morphologie (Canon, Poitrine) doit confirmer le poids.")
-            var_x3 = st.selectbox("Comparer P70 avec :", ['c_canon', 'h_garrot', 'p_thoracique', 'l_poitrine', 'GMQ'], key="j70")
-            fig3 = px.scatter(df, x=var_x3, y="p70", color="race", trendline="ols", title=f"Lien entre {var_x3} et Poids J70")
-            st.plotly_chart(fig3, use_container_width=True)
-            
-
-# (Les autres sections Dashboard et Saisie restent identiques à votre code précédent)
+elif menu == "📥 Import/Export":
+    st.title("📥 Gestion des données")
+    towrite = io.BytesIO()
+    df.to_excel(towrite, index=False)
+    st.download_button("📥 Télécharger le registre Excel", data=towrite, file_name="registre.xlsx")
