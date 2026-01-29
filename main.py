@@ -13,11 +13,11 @@ import time
 # CONFIGURATION PROFESSIONNELLE
 # ==========================================
 SEUILS_PRO = {
-    'p70_absolu': 22.0,        # Poids minimum Elite (kg)
-    'canon_absolu': 7.5,       # Canon minimum Elite (cm)  
-    'percentile_elite': 0.85,  # Top 15%
-    'z_score_max': 2.5,        # Détection anomalies
-    'ratio_p70_canon_max': 8.0 # Alertes ratio
+    'p70_absolu': 22.0,
+    'canon_absolu': 7.5,
+    'percentile_elite': 0.85,
+    'z_score_max': 2.5,
+    'ratio_p70_canon_max': 8.0
 }
 
 # ==========================================
@@ -42,16 +42,31 @@ def get_db_connection():
 def init_db():
     with get_db_connection() as conn:
         c = conn.cursor()
+        
+        # Table principale avec nouvelles colonnes
         c.execute('''
             CREATE TABLE IF NOT EXISTS beliers (
                 id TEXT PRIMARY KEY, 
                 race TEXT, 
+                race_precision TEXT,  -- NOUVEAU: précision si race=Croisé/Non identifiée
                 date_naiss TEXT, 
+                date_estimee INTEGER DEFAULT 0,  -- NOUVEAU: 0=exacte, 1=estimée via dentition
                 objectif TEXT, 
                 dentition TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+        
+        # Migration si table existe déjà (ajout colonnes manquantes)
+        try:
+            c.execute("ALTER TABLE beliers ADD COLUMN race_precision TEXT")
+        except:
+            pass
+        try:
+            c.execute("ALTER TABLE beliers ADD COLUMN date_estimee INTEGER DEFAULT 0")
+        except:
+            pass
+        
         c.execute('''
             CREATE TABLE IF NOT EXISTS mesures (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -81,6 +96,27 @@ def safe_float(val, default=0.0):
         return f if not np.isnan(f) else default
     except:
         return default
+
+def calculer_date_naissance(dentition, date_reference=None):
+    """
+    Convertit la dentition en date de naissance estimée
+    Retourne: (date_naiss, age_jours_approx)
+    """
+    if date_reference is None:
+        date_reference = datetime.now()
+    
+    ages_dentition = {
+        "2 Dents": 90,      # ~3 mois
+        "4 Dents": 180,     # ~6 mois  
+        "6 Dents": 270,     # ~9 mois
+        "Pleine bouche": 365 # ~12+ mois
+    }
+    
+    if dentition in ages_dentition:
+        age_jours = ages_dentition[dentition]
+        date_naiss = date_reference - timedelta(days=age_jours)
+        return date_naiss, age_jours
+    return None, 0
 
 def detecter_anomalies(df):
     if df.empty:
@@ -179,10 +215,11 @@ def identifier_elite_pro(df):
 def load_data():
     try:
         with get_db_connection() as conn:
+            # Récupération des nouvelles colonnes race_precision et date_estimee
             query = """
-                SELECT b.id, b.race, b.date_naiss, b.objectif, b.dentition,
-                       m.p10, m.p30, m.p70, m.h_garrot, m.l_corps, 
-                       m.p_thoracique, m.l_poitrine, m.c_canon
+                SELECT b.id, b.race, b.race_precision, b.date_naiss, b.date_estimee,
+                       b.objectif, b.dentition, m.p10, m.p30, m.p70, m.h_garrot, 
+                       m.l_corps, m.p_thoracique, m.l_poitrine, m.c_canon
                 FROM beliers b
                 LEFT JOIN (
                     SELECT id_animal, MAX(id) as max_id 
@@ -196,8 +233,31 @@ def load_data():
             if df.empty:
                 return pd.DataFrame()
             
+            # Conversion numérique
             for col in ['p10', 'p30', 'p70', 'h_garrot', 'c_canon', 'p_thoracique', 'l_poitrine', 'l_corps']:
-                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+            
+            # Formater l'affichage de la date (avec ~ si estimée)
+            def format_date(row):
+                if pd.notna(row.get('date_naiss')) and row.get('date_naiss'):
+                    date_str = str(row['date_naiss'])[:10]
+                    if row.get('date_estimee') == 1:
+                        return f"~{date_str}"
+                    return date_str
+                return "Non définie"
+            
+            df['date_affichage'] = df.apply(format_date, axis=1)
+            
+            # Formater la race avec précision si existe
+            def format_race(row):
+                race = row.get('race', '')
+                prec = row.get('race_precision')
+                if pd.notna(prec) and prec and race in ['Non identifiée', 'Croisé']:
+                    return f"{race} ({prec})"
+                return race
+            
+            df['race_affichage'] = df.apply(format_race, axis=1)
             
             df = detecter_anomalies(df)
             results = df.apply(lambda x: pd.Series(calculer_metrics_pro(x)), axis=1)
@@ -206,11 +266,11 @@ def load_data():
             
             return df
     except Exception as e:
-        st.error(f"Erreur chargement: {e}")
+        st.error(f"Erreur chargement données: {e}")
         return pd.DataFrame()
 
 def generer_demo(n=30):
-    races = ["Ouled Djellal", "Rembi", "Hamra"]
+    races = ["Ouled Djellal", "Rembi", "Hamra", "Non identifiée"]
     count = 0
     
     with get_db_connection() as conn:
@@ -230,18 +290,27 @@ def generer_demo(n=30):
                 
                 hg = round(65 + (p70/35)*8 + random.uniform(-2, 2), 1)
                 animal_id = f"REF-2024-{1000+i}"
+                race = random.choice(races)
+                race_prec = "Type lourd" if race == "Non identifiée" else None
                 
-                c.execute("INSERT OR IGNORE INTO beliers VALUES (?,?,?,?,?,?)",
-                    (animal_id, random.choice(races), 
-                     (datetime.now() - timedelta(days=random.randint(80,300))).strftime("%Y-%m-%d"),
-                     "Sélection", "2 Dents", datetime.now()))
+                # Date aléatoire ou estimée
+                date_estimee = random.choice([0, 1])
+                if date_estimee:
+                    date_nais = (datetime.now() - timedelta(days=100)).strftime("%Y-%m-%d")
+                else:
+                    date_nais = (datetime.now() - timedelta(days=random.randint(80,300))).strftime("%Y-%m-%d")
+                
+                c.execute("""
+                    INSERT OR IGNORE INTO beliers (id, race, race_precision, date_naiss, date_estimee, objectif, dentition)
+                    VALUES (?,?,?,?,?,?,?)
+                """, (animal_id, race, race_prec, date_nais, date_estimee, "Sélection", "2 Dents"))
                 
                 c.execute("""
                     INSERT INTO mesures (id_animal, p10, p30, p70, h_garrot, l_corps, p_thoracique, l_poitrine, c_canon)
                     VALUES (?,?,?,?,?,?,?,?,?)
                 """, (animal_id, p10, p30, p70, hg, 80, hg*1.2, 24, cc))
                 count += 1
-            except:
+            except Exception as e:
                 continue
     return count
 
@@ -276,11 +345,10 @@ def main():
     st.sidebar.markdown("---")
     st.sidebar.caption(f"Seuil Elite: >{SEUILS_PRO['p70_absolu']}kg & >{SEUILS_PRO['canon_absolu']}cm")
     
-    # MENU COMPLET (5 onglets)
     menu = st.sidebar.radio("Menu", [
         "🏠 Dashboard", 
         "🔍 Contrôle Qualité", 
-        "📈 Stats & Analyse",  # <-- L'ONGLET MANQUANT EST ICI
+        "📈 Stats & Analyse",
         "📸 Scanner", 
         "✍️ Saisie"
     ])
@@ -308,14 +376,18 @@ def main():
             st.metric("Total Sujets", len(df))
         with col2:
             st.metric("Elite Pro", len(df[elite_mask]), f"{len(df[elite_mask])/len(df)*100:.1f}%")
-        with col3:
+        with col3:  # CORRECTION: col3 (pas c3)
             st.metric("Index Moyen", f"{df['Index'].mean():.1f}/100")
         with col4:
             st.metric("Anomalies", int(nb_anomalies), "Vérifier" if nb_anomalies > 0 else "OK", 
                      delta_color="inverse" if nb_anomalies > 0 else "normal")
         
         st.subheader("Classement officiel")
-        df_display = df[['Rang', 'Statut', 'id', 'race', 'p70', 'c_canon', 'Index', 'Appreciation', 'Alerte']].sort_values('Rang')
+        
+        # Colonnes d'affichage avec race et date formatées
+        cols_display = ['Rang', 'Statut', 'id', 'race_affichage', 'date_affichage', 'p70', 'c_canon', 'Index', 'Appreciation', 'Alerte']
+        df_display = df[cols_display].sort_values('Rang').copy()
+        df_display.columns = ['Rang', 'Statut', 'ID', 'Race', 'Date Naiss.', 'P70(kg)', 'Canon(cm)', 'Index', 'Appreciation', 'Alerte']
         
         def color_status(val):
             if val == 'ELITE PRO':
@@ -356,7 +428,7 @@ def main():
         
         if not df_anomalies.empty:
             st.error(f"⚠️ {len(df_anomalies)} mesures suspectes")
-            st.dataframe(df_anomalies[['id', 'p70', 'c_canon', 'h_garrot', 'Alerte', 'Index']], use_container_width=True)
+            st.dataframe(df_anomalies[['id', 'race_affichage', 'p70', 'c_canon', 'h_garrot', 'Alerte', 'Index']], use_container_width=True)
             st.info("💡 Ces animaux sont exclus de l'Elite jusqu'à correction")
         else:
             st.success("✅ Aucune anomalie détectée")
@@ -365,7 +437,7 @@ def main():
         st.dataframe(df[['p70', 'c_canon', 'h_garrot', 'GMQ', 'Index']].describe(), use_container_width=True)
     
     # ==========================================
-    # 3. STATS & ANALYSE (LE MANQUANT !)
+    # 3. STATS & ANALYSE
     # ==========================================
     elif menu == "📈 Stats & Analyse":
         st.title("📈 Analyse Scientifique")
@@ -391,14 +463,13 @@ def main():
         
         with tab2:
             st.subheader("Performance par Race")
-            if 'race' in df.columns and df['race'].nunique() > 1:
+            if 'race_affichage' in df.columns and df['race'].nunique() > 1:
                 col1, col2 = st.columns(2)
                 with col1:
                     fig = px.box(df, x="race", y="Index", color="race", points="all")
                     st.plotly_chart(fig, use_container_width=True)
                 
                 with col2:
-                    # Radar chart comparatif
                     races = df['race'].unique()[:3]
                     if len(races) >= 2:
                         stats_race = df.groupby('race')[['p70', 'GMQ', 'c_canon', 'Rendement']].mean()
@@ -457,7 +528,10 @@ def main():
             img = st.camera_input("📷 Photo de profil")
         
         with col2:
-            race_scan = st.selectbox("Race *", ["Ouled Djellal", "Rembi", "Hamra", "Babarine"], key="race_scanner")
+            race_scan = st.selectbox("Race *", ["Ouled Djellal", "Rembi", "Hamra", "Babarine", "Non identifiée"], key="race_scanner")
+            
+            if race_scan == "Non identifiée":
+                st.warning("⚠️ Profil moyen standard appliqué (précision réduite)")
             
             st.info(f"**Profil type {race_scan}** chargé")
             
@@ -474,7 +548,8 @@ def main():
                     "Ouled Djellal": {"h_garrot": 72.0, "c_canon": 8.0, "l_poitrine": 24.0, "p_thoracique": 83.0, "l_corps": 82.0},
                     "Rembi": {"h_garrot": 76.0, "c_canon": 8.8, "l_poitrine": 26.0, "p_thoracique": 88.0, "l_corps": 86.0},
                     "Hamra": {"h_garrot": 70.0, "c_canon": 7.8, "l_poitrine": 23.0, "p_thoracique": 80.0, "l_corps": 78.0},
-                    "Babarine": {"h_garrot": 74.0, "c_canon": 8.2, "l_poitrine": 25.0, "p_thoracique": 85.0, "l_corps": 84.0}
+                    "Babarine": {"h_garrot": 74.0, "c_canon": 8.2, "l_poitrine": 25.0, "p_thoracique": 85.0, "l_corps": 84.0},
+                    "Non identifiée": {"h_garrot": 73.0, "c_canon": 8.1, "l_poitrine": 24.5, "p_thoracique": 84.0, "l_corps": 82.5}  # Profil moyen
                 }
                 
                 base = DATA_RACES[race_scan].copy()
@@ -503,68 +578,198 @@ def main():
                     st.rerun()
     
     # ==========================================
-    # 5. SAISIE MANUELLE
+    # 5. SAISIE MANUELLE (AMÉLIORÉE)
     # ==========================================
     elif menu == "✍️ Saisie":
-        st.title("✍️ Nouvelle Fiche")
+        st.title("✍️ Nouvelle Fiche d'Identification")
         
         scan = st.session_state.get('scan', {})
         if st.session_state.get('go_saisie'):
-            st.success("Données scanner importées!")
+            st.success("✅ Données du scanner importées! Vérifiez et complétez.")
             st.session_state['go_saisie'] = False
         
-        with st.form("form_saisie"):
-            c1, c2 = st.columns(2)
-            with c1:
-                id_animal = st.text_input("ID Animal *", placeholder="REF-2024-001")
-                race = st.selectbox("Race *", ["Ouled Djellal", "Rembi", "Hamra", "Babarine"])
-            with c2:
-                date_nais = st.date_input("Date naissance", datetime.now() - timedelta(days=100))
-                obj = st.selectbox("Objectif", ["Sélection", "Reproduction"])
+        with st.form("form_saisie_pro"):
+            # SECTION 1: IDENTIFICATION
+            st.subheader("🆔 Identification de l'animal")
+            col_id1, col_id2 = st.columns(2)
             
-            st.subheader("Poids")
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                p10 = st.number_input("Poids J10", 0.0, 20.0, 0.0)
-            with c2:
-                p30 = st.number_input("Poids J30", 0.0, 40.0, 0.0)
-            with c3:
-                p70 = st.number_input("Poids J70 *", 0.0, 100.0, 0.0)
+            with col_id1:
+                id_animal = st.text_input("ID Animal *", placeholder="ex: REF-2024-001", key="id_anim")
+                
+                # RACE avec gestion incertitude
+                race_options = ["Ouled Djellal", "Rembi", "Hamra", "Babarine", "Croisé", "Non identifiée"]
+                race = st.selectbox("Race *", race_options, help="Sélectionnez 'Non identifiée' si doute persiste")
+                
+                # Champ précision conditionnel
+                race_precision = ""
+                if race in ["Non identifiée", "Croisé"]:
+                    race_precision = st.text_input(
+                        "Descriptif / Croisement supposé", 
+                        placeholder="ex: Type Rembi, possible croisement",
+                        help="Informations pour aider à l'identification future"
+                    )
             
-            st.subheader("Mensurations (cm)")
+            with col_id2:
+                st.markdown("**📅Âge de l'animal**")
+                
+                # Choix méthode: Date exacte vs Dentition
+                methode_age = st.radio(
+                    "Méthode de détermination de l'âge", 
+                    ["Date de naissance connue (registre)", "Estimation par dentition"],
+                    index=0,
+                    help="La dentition permet d'estimer l'âge si la date est inconnue"
+                )
+                
+                date_naiss = None
+                dentition = "2 Dents"
+                date_estimee_flag = 0
+                
+                if methode_age == "Date de naissance connue (registre)":
+                    date_naiss = st.date_input(
+                        "Date naissance exacte", 
+                        datetime.now() - timedelta(days=100),
+                        help="Date issue du registre d'élevage"
+                    )
+                    dentition = st.selectbox(
+                        "Dentition observée (confirmation)", 
+                        ["2 Dents", "4 Dents", "6 Dents", "Pleine bouche"]
+                    )
+                    date_estimee_flag = 0
+                    
+                else:
+                    # MODE ESTIMATION PAR DENTITION
+                    st.info("📏 L'âge sera calculé automatiquement")
+                    
+                    dentition = st.selectbox(
+                        "Dentition actuelle *", 
+                        ["2 Dents", "4 Dents", "6 Dents", "Pleine bouche"],
+                        help="2 Dents = ~3 mois | 4 Dents = ~6 mois | 6 Dents = ~9 mois | Pleine = 12+ mois"
+                    )
+                    
+                    # Calcul automatique
+                    date_calculee, age_jours = calculer_date_naissance(dentition)
+                    if date_calculee:
+                        date_naiss = date_calculee
+                        date_estimee_flag = 1
+                        
+                        st.success(f"📅 **Date estimée: {date_naiss.strftime('%d/%m/%Y')}**")
+                        st.caption(f"Âge approximatif: {age_jours} jours (~{age_jours//30} mois)")
+                        
+                        # Avertissement si cohérence douteuse avec poids
+                        st.info("💡 Vérifiez que le poids saisi ci-dessous correspond à cet âge")
+                
+                objectif = st.selectbox("Objectif élevage", ["Sélection", "Engraissement", "Reproduction"])
+            
+            # SECTION 2: POIDS
+            st.subheader("⚖️ Poids de croissance")
+            col_p1, col_p2, col_p3 = st.columns(3)
+            
+            with col_p1:
+                p10 = st.number_input("Poids J10 (kg)", 0.0, 20.0, 0.0, 0.1,
+                                    help="Si inconnu, laisser 0")
+            with col_p2:
+                p30 = st.number_input("Poids J30 (kg)", 0.0, 40.0, 0.0, 0.1,
+                                    help="Si inconnu, laisser 0")
+            with col_p3:
+                if date_estimee_flag == 1:
+                    # Si date estimée, le p70 est en fait le poids ACTUEL à la dentition observée
+                    p70 = st.number_input("Poids ACTUEL (kg) *", 0.0, 100.0, 0.0, 0.1,
+                                        help=f"Poids à {dentition} (obligatoire pour le calcul)")
+                else:
+                    p70 = st.number_input("Poids J70 (kg) *", 0.0, 100.0, 0.0, 0.1,
+                                        help="Poids à 70 jours (ou poids actuel si plus âgé)")
+            
+            # SECTION 3: MENSURATIONS
+            st.subheader("📏 Mensurations morphologiques (cm)")
             cols = st.columns(5)
             mens = {}
-            fields = [('h_garrot', 'Hauteur'), ('c_canon', 'Canon'), 
-                     ('l_poitrine', 'Larg.Poitrine'), ('p_thoracique', 'Pér.Thorax'), ('l_corps', 'Long.Corps')]
+            fields = [
+                ('h_garrot', 'Hauteur Garrot'),
+                ('c_canon', 'Circonf. Canon'),
+                ('l_poitrine', 'Larg. Poitrine'),
+                ('p_thoracique', 'Périm. Thorax'),
+                ('l_corps', 'Long. Corps')
+            ]
             
             for i, (key, label) in enumerate(fields):
                 with cols[i]:
-                    mens[key] = st.number_input(label, 0.0, 200.0, 
-                                               float(scan.get(key, 0.0)), key=f"inp_{key}")
+                    mens[key] = st.number_input(
+                        label,
+                        min_value=0.0,
+                        max_value=200.0,
+                        value=float(scan.get(key, 0.0)),
+                        step=0.5,
+                        key=f"input_{key}"
+                    )
             
-            if st.form_submit_button("💾 Enregistrer", type="primary"):
-                if not id_animal or p70 <= 0:
-                    st.error("ID et Poids J70 obligatoires!")
+            # BOUTON SAUVEGARDE
+            submitted = st.form_submit_button("💾 Enregistrer la fiche", type="primary", use_container_width=True)
+            
+            if submitted:
+                # VALIDATIONS
+                erreurs = []
+                if not id_animal:
+                    erreurs.append("L'ID animal est obligatoire")
+                if p70 <= 0:
+                    erreurs.append("Le poids est obligatoire")
+                if date_naiss is None:
+                    erreurs.append("Date de naissance ou dentition obligatoire")
+                
+                if erreurs:
+                    for err in erreurs:
+                        st.error(f"❌ {err}")
                 else:
                     try:
                         with get_db_connection() as conn:
                             c = conn.cursor()
-                            c.execute("INSERT OR REPLACE INTO beliers VALUES (?,?,?,?,?,?)",
-                                (id_animal, race, date_nais.strftime("%Y-%m-%d"), obj, "2 Dents", datetime.now()))
+                            
+                            # Insertion avec nouvelles colonnes
                             c.execute("""
-                                INSERT INTO mesures (id_animal, p10, p30, p70, h_garrot, l_corps, p_thoracique, l_poitrine, c_canon)
-                                VALUES (?,?,?,?,?,?,?,?,?)
-                            """, (id_animal, p10, p30, p70, mens['h_garrot'], 
-                                  mens['l_corps'], mens['p_thoracique'], mens['l_poitrine'], mens['c_canon']))
+                                INSERT OR REPLACE INTO beliers 
+                                (id, race, race_precision, date_naiss, date_estimee, objectif, dentition)
+                                VALUES (?, ?, ?, ?, ?, ?, ?)
+                            """, (
+                                id_animal,
+                                race,
+                                race_precision if race_precision else None,
+                                date_naiss.strftime("%Y-%m-%d"),
+                                date_estimee_flag,
+                                objectif,
+                                dentition
+                            ))
+                            
+                            c.execute("""
+                                INSERT INTO mesures 
+                                (id_animal, p10, p30, p70, h_garrot, l_corps, p_thoracique, l_poitrine, c_canon)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """, (
+                                id_animal, p10, p30, p70,
+                                mens['h_garrot'],
+                                mens['l_corps'],
+                                mens['p_thoracique'],
+                                mens['l_poitrine'],
+                                mens['c_canon']
+                            ))
                         
+                        # Message de confirmation
+                        type_date = "📅 Date estimée" if date_estimee_flag else "📅 Date exacte"
+                        type_race = race
+                        if race_precision:
+                            type_race += f" ({race_precision})"
+                        
+                        st.success(f"✅ {id_animal} enregistré avec succès!")
+                        st.info(f"**{type_date}** | **Race:** {type_race} | **Dentition:** {dentition}")
+                        
+                        # Nettoyage session
                         if 'scan' in st.session_state:
                             del st.session_state['scan']
-                        st.success(f"✅ {id_animal} enregistré!")
+                        
                         st.balloons()
-                        time.sleep(1)
+                        time.sleep(2)
                         st.rerun()
+                        
                     except Exception as e:
-                        st.error(f"Erreur: {e}")
+                        st.error(f"❌ Erreur base de données: {e}")
 
 if __name__ == "__main__":
     main()
