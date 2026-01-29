@@ -308,7 +308,7 @@ def main():
             st.metric("Total Sujets", len(df))
         with col2:
             st.metric("Elite Pro", len(df[elite_mask]), f"{len(df[elite_mask])/len(df)*100:.1f}%")
-        with c3:
+        with col3:
             st.metric("Index Moyen", f"{df['Index'].mean():.1f}/100")
         with col4:
             st.metric("Anomalies", int(nb_anomalies), "Vérifier" if nb_anomalies > 0 else "OK", 
