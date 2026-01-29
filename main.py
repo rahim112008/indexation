@@ -210,7 +210,13 @@ if menu == "🏠 Dashboard":
         with col_f2:
             statut_filter = st.selectbox("Statut", ["Tous", "Élite uniquement", "Standard uniquement"])
         
-        # Application des filtres
+                # Application des filtres
         df_filtered = df[df['race'].isin(race_filter)]
         if statut_filter == "Élite uniquement":
-            df_filtered = df_filtered[df_filtered['
+            df_filtered = df_filtered[df_filtered['Statut'] == "Elite"]
+        elif statut_filter == "Standard uniquement":
+            df_filtered = df_filtered[df_filtered['Statut'] == ""]
+        
+        # Tableau avec coloration
+        st.subheader("Classement des animaux")
+        display_cols = ['Statut', 'id', 'race', 'p70', 'c_canon', 'GMQ', 'Rendement', 'Index']
