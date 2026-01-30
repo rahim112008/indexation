@@ -565,8 +565,8 @@ def main():
                               title="Répartition EUROP")
             st.plotly_chart(fig2, use_container_width=True)
     
-    # ==========================================
-    # COMPOSITION (ECHO-LIKE)
+       # ==========================================
+    # COMPOSITION (ECHO-LIKE) - VERSION DEBUG
     # ==========================================
     elif menu == "🥩 Composition (Écho-like)":
         st.title("🥩 Analyse Composition Corporelle")
@@ -575,164 +575,101 @@ def main():
             st.info("Pas de données")
             return
         
-        animal_id = st.selectbox("Sélectionner un animal", df['id'])
+        animal_id = st.selectbox("Sélectionner un animal", df['id'].tolist())
         
         if animal_id:
-            animal = df[df['id'] == animal_id].iloc[0]
+            # RECUPERATION DONNEES
+            try:
+                animal_row = df[df['id'] == animal_id]
+                if animal_row.empty:
+                    st.error("Animal non trouvé")
+                    return
+                
+                animal = animal_row.iloc[0]
+                
+                # Affichage brut des données pour debug
+                st.write("DEBUG - Données brutes :")
+                st.json({
+                    'id': str(animal_id),
+                    'Pct_Muscle': str(animal.get('Pct_Muscle', 'MANQUANT')),
+                    'Pct_Gras': str(animal.get('Pct_Gras', 'MANQUANT')),
+                    'Pct_Os': str(animal.get('Pct_Os', 'MANQUANT')),
+                    'Gras_mm': str(animal.get('Gras_mm', 'MANQUANT'))
+                })
+                
+            except Exception as e:
+                st.error(f"Erreur récupération données: {e}")
+                return
             
+            # LAYOUT 3 COLONNES
             col1, col2, col3 = st.columns(3)
             
             with col1:
                 st.subheader("📊 Composition")
                 
-                # CORRECTION : Sécurisation stricte des valeurs
+                # Extraction sécurisée
                 try:
-                    pct_muscle = float(animal['Pct_Muscle']) if pd.notna(animal['Pct_Muscle']) else 0.0
-                    pct_gras = float(animal['Pct_Gras']) if pd.notna(animal['Pct_Gras']) else 0.0
-                    pct_os = float(animal['Pct_Os']) if pd.notna(animal['Pct_Os']) else 0.0
-                except:
-                    pct_muscle = pct_gras = pct_os = 0.0
+                    pm = float(animal['Pct_Muscle']) if pd.notna(animal['Pct_Muscle']) else 0.0
+                    pg = float(animal['Pct_Gras']) if pd.notna(animal['Pct_Gras']) else 0.0
+                    po = float(animal['Pct_Os']) if pd.notna(animal['Pct_Os']) else 0.0
+                except Exception as e:
+                    st.error(f"Erreur conversion: {e}")
+                    pm = pg = po = 0.0
                 
-                # Protection contre valeurs négatives
-                pct_muscle = max(0.0, pct_muscle)
-                pct_gras = max(0.0, pct_gras)
-                pct_os = max(0.0, pct_os)
+                # Affichage texte d'abord (test)
+                st.metric("Muscle", f"{pm:.1f}%")
+                st.metric("Gras", f"{pg:.1f}%")
+                st.metric("Os", f"{po:.1f}%")
                 
-                # Calcul Autres avec protection
-                total_connu = pct_muscle + pct_gras + pct_os
-                pct_autres = max(0.0, 100.0 - total_connu)
-                
-                # Normalisation si dépassement 100%
-                if total_connu > 100.0:
-                    facteur = 100.0 / total_connu
-                    pct_muscle *= facteur
-                    pct_gras *= facteur
-                    pct_os *= facteur
-                    pct_autres = 0.0
-                
-                labels = ['Muscle', 'Gras', 'Os', 'Autres']
-                values = [pct_muscle, pct_gras, pct_os, pct_autres]
-                
-                # Vérification avant affichage (évite écran noir)
-                if sum(values) > 0:
-                    fig = go.Figure(data=[go.Pie(
-                        labels=labels, 
-                        values=values, 
-                        hole=0.4,
-                        textinfo='label+percent',
-                        textposition='outside'
-                    )])
-                    fig.update_layout(title_text=f"Répartition - {animal_id}", height=400)
-                    st.plotly_chart(fig, use_container_width=True)
+                # Test graphique uniquement si valeurs valides
+                if pm > 0 or pg > 0 or po > 0:
+                    try:
+                        import plotly.graph_objects as go
+                        
+                        values = [max(0, pm), max(0, pg), max(0, po), max(0, 100-(pm+pg+po))]
+                        labels = ['Muscle', 'Gras', 'Os', 'Autres']
+                        
+                        fig = go.Figure(data=[go.Pie(labels=labels, values=values, hole=.3)])
+                        fig.update_layout(height=300)
+                        st.plotly_chart(fig, use_container_width=True)
+                        st.success("Graphique OK")
+                        
+                    except Exception as e:
+                        st.error(f"Erreur Plotly Pie: {e}")
                 else:
-                    st.warning("Données composition manquantes (0%)")
-                    st.info("Vérifiez que le poids et les mensurations sont saisis")
-                
-                # Métriques sécurisées
-                classe_europ = str(animal['Classe_EUROP']) if pd.notna(animal['Classe_EUROP']) else "N/A"
-                indice_s90 = float(animal['Indice_S90']) if pd.notna(animal['Indice_S90']) else 0.0
-                
-                st.metric("Classement EUROP", classe_europ)
-                st.metric("Indice S90", f"{indice_s90:.1f}")
+                    st.warning("Valeurs à 0 - Graphique désactivé")
             
             with col2:
-                st.subheader("📏 Mesures Écho-like")
+                st.subheader("📏 Épaisseur Gras")
                 
-                # Jauge sécurisée
-                gras_mm = float(animal['Gras_mm']) if pd.notna(animal['Gras_mm']) else 0.0
-                
-                if gras_mm > 0:
-                    fig_gauge = go.Figure(go.Indicator(
-                        mode="gauge+number",
-                        value=gras_mm,
-                        domain={'x': [0, 1], 'y': [0, 1]},
-                        title={'text': "Épaisseur Gras (mm)"},
-                        gauge={
-                            'axis': {'range': [None, 25]},
-                            'bar': {'color': "orange"},
-                            'steps': [
-                                {'range': [0, 5], 'color': "lightgreen"},
-                                {'range': [5, 12], 'color': "yellow"},
-                                {'range': [12, 20], 'color': "orange"},
-                                {'range': [20, 25], 'color': "red"}
-                            ]
-                        }
-                    ))
-                    st.plotly_chart(fig_gauge, use_container_width=True)
-                else:
-                    st.info("Données gras non disponibles")
-                
-                # Autres métriques avec protection
                 try:
-                    smld = float(animal['SMLD']) if pd.notna(animal['SMLD']) else 0.0
-                    ic = float(animal['IC']) if pd.notna(animal['IC']) else 0.0
-                    st.metric("Surface Muscle", f"{smld:.1f} cm²")
-                    st.metric("Indice Conformation", f"{ic:.2f}")
-                except:
-                    pass
+                    gras = float(animal['Gras_mm']) if pd.notna(animal['Gras_mm']) else 0.0
+                    st.metric("Gras mm", f"{gras:.1f}")
+                    
+                    if gras > 0:
+                        try:
+                            fig2 = go.Figure(go.Indicator(
+                                mode="gauge+number",
+                                value=gras,
+                                domain={'x': [0, 1], 'y': [0, 1]},
+                                title={'text': "mm"},
+                                gauge={'axis': {'range': [0, 25]}, 'bar': {'color': "orange"}}
+                            ))
+                            st.plotly_chart(fig2, use_container_width=True)
+                        except Exception as e:
+                            st.error(f"Erreur jauge: {e}")
+                            
+                except Exception as e:
+                    st.error(f"Erreur lecture gras: {e}")
             
             with col3:
-                st.subheader("📈 Références")
-                
-                race_aff = str(animal['race_affichage']) if pd.notna(animal['race_affichage']) else "N/A"
-                p70_val = float(animal['p70']) if pd.notna(animal['p70']) else 0.0
-                
-                st.info(f"""
-                **Profil {race_aff}:**
-                - Poids: {p70_val:.1f} kg
-                - Gras: {gras_mm:.1f} mm
-                - **{classe_europ}**
-                
-                Gras < 5mm: Maigre
-                Gras 5-12mm: Optimal
-                Gras > 15mm: Gras
-                """)
-                
-                if pct_gras < 15:
-                    st.success("Profil maigre")
-                elif pct_gras < 25:
-                    st.success("Profil optimal")
-                else:
-                    st.warning("Profil gras")
-        
-        st.markdown("---")
-        st.subheader("Comparatif Troupeau")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            # Radar avec vérification
-            if len(df) > 0:
+                st.subheader("📋 Infos")
                 try:
-                    categories = ['Muscle %', 'Gras %', 'Os %']
-                    mean_vals = [
-                        df['Pct_Muscle'].mean(),
-                        df['Pct_Gras'].mean(), 
-                        df['Pct_Os'].mean()
-                    ]
-                    
-                    # Remplacer NaN par 0 dans les moyennes
-                    mean_vals = [0 if pd.isna(v) else v for v in mean_vals]
-                    
-                    fig_radar = go.Figure()
-                    fig_radar.add_trace(go.Scatterpolar(
-                        r=mean_vals + [mean_vals[0]],
-                        theta=categories + [categories[0]],
-                        fill='toself'
-                    ))
-                    fig_radar.update_layout(polar=dict(radialaxis=dict(range=[0, max(mean_vals)*1.2])))
-                    st.plotly_chart(fig_radar, use_container_width=True)
-                except:
-                    st.error("Erreur radar")
-        
-        with col2:
-            # Scatter avec vérification données
-            df_clean = df.dropna(subset=['p70', 'Gras_mm'])
-            if len(df_clean) > 0:
-                fig_corr = px.scatter(df_clean, x='p70', y='Gras_mm', color='Classe_EUROP',
-                                    title="Poids vs Épaisseur Gras")
-                st.plotly_chart(fig_corr, use_container_width=True)
-            else:
-                st.info("Données insuffisantes")
+                    st.write(f"Race: {animal.get('race_affichage', 'N/A')}")
+                    st.write(f"Poids: {animal.get('p70', 0)} kg")
+                    st.write(f"EUROP: {animal.get('Classe_EUROP', 'N/A')}")
+                except Exception as e:
+                    st.error(f"Erreur infos: {e}")
     
     # ==========================================
     # CONTRÔLE QUALITÉ CORRIGÉ
