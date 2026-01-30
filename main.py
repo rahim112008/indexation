@@ -565,7 +565,7 @@ def main():
                               title="Répartition EUROP")
             st.plotly_chart(fig2, use_container_width=True)
     
-           # ==========================================
+               # ==========================================
     # COMPOSITION (ECHO-LIKE) - VERSION ROBUSTE
     # ==========================================
     elif menu == "🥩 Composition (Écho-like)":
