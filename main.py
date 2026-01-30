@@ -116,32 +116,49 @@ def calculer_date_naissance(dentition, date_reference=None):
         return date_naiss, age_jours
     return None, 0
 
-def detecter_anomalies(df):
+def detecter_anomalies(df, seuil_z=2.5, seuil_ratio=8.0):
     if df.empty:
         return df
     
     df['Alerte'] = ""
     df['Anomalie'] = False
+    df['Severite'] = 0  # 0=OK, 1=Warning, 2=Majeur, 3=Critique
     
+    # Vérification Z-score seulement si assez de données (n>=5)
     cols_check = ['p70', 'c_canon', 'h_garrot', 'p_thoracique']
     for col in cols_check:
-        if col in df.columns and df[col].std() > 0:
-            z_scores = np.abs((df[col] - df[col].mean()) / df[col].std())
-            mask = z_scores > SEUILS_PRO['z_score_max']
-            df.loc[mask, 'Anomalie'] = True
-            df.loc[mask, 'Alerte'] += f"{col} anormal; "
+        if col in df.columns and len(df) >= 5:
+            std_val = df[col].std()
+            if std_val > 0:
+                z_scores = np.abs((df[col] - df[col].mean()) / std_val)
+                mask = z_scores > seuil_z
+                df.loc[mask, 'Anomalie'] = True
+                df.loc[mask, 'Severite'] = np.maximum(df.loc[mask, 'Severite'], 2)
+                # Limiter le nombre de décimales pour l'affichage
+                for idx in df[mask].index:
+                    z_val = z_scores.loc[idx]
+                    df.loc[idx, 'Alerte'] += f"{col} anormal (Z:{z_val:.1f}); "
     
-    mask_ratio = (df['p70'] / df['c_canon'] > SEUILS_PRO['ratio_p70_canon_max']) & (df['c_canon'] > 0)
+    # Ratio poids/canon incohérent (physiquement impossible si >8)
+    mask_ratio = (df['p70'] / df['c_canon'] > seuil_ratio) & (df['c_canon'] > 0) & (df['p70'] > 0)
     df.loc[mask_ratio, 'Anomalie'] = True
-    df.loc[mask_ratio, 'Alerte'] += "Ratio poids/canon incohérent;"
+    df.loc[mask_ratio, 'Severite'] = 3
+    df.loc[mask_ratio, 'Alerte'] += "Ratio poids/canon impossible; "
     
+    # Gras excessif (>40%)
     if 'Pct_Gras' in df.columns:
         mask_gras = df['Pct_Gras'] > 40
         df.loc[mask_gras, 'Anomalie'] = True
-        df.loc[mask_gras, 'Alerte'] += "Estimation gras anormale;"
+        df.loc[mask_gras, 'Severite'] = np.maximum(df.loc[mask_gras, 'Severite'], 1)
+        for idx in df[mask_gras].index:
+            g_val = df.loc[idx, 'Pct_Gras']
+            df.loc[idx, 'Alerte'] += f"Gras excessif ({g_val:.1f}%}); "
     
-    mask_null = (df['p70'] == 0) | (df['c_canon'] == 0)
-    df.loc[mask_null, 'Alerte'] += "Données manquantes;"
+    # Données manquantes = Warning seulement (pas anomalie critique)
+    mask_null_p70 = (df['p70'] == 0) | (df['p70'].isna())
+    mask_null_cc = (df['c_canon'] == 0) | (df['c_canon'].isna())
+    df.loc[mask_null_p70, 'Alerte'] += "Poids manquant;"
+    df.loc[mask_null_cc, 'Alerte'] += "Canon manquant;"
     
     return df
 
@@ -427,7 +444,7 @@ def main():
     df = load_data()
     
     # ==========================================
-    # DASHBOARD
+    # DASHBOARD CORRIGÉ
     # ==========================================
     if menu == "🏠 Dashboard":
         st.title("🏆 Tableau de Bord Professionnel")
@@ -436,9 +453,62 @@ def main():
             st.info("👋 Générez des données test pour commencer")
             return
         
-        nb_anomalies = df['Anomalie'].sum()
-        if nb_anomalies > 0:
-            st.warning(f"⚠️ {nb_anomalies} anomalie(s) détectée(s)")
+        # Gestion intelligente des anomalies
+        if 'anomalies_acquittees' not in st.session_state:
+            st.session_state['anomalies_acquittees'] = []
+        
+        # Filtrer les anomalies déjà validées par l'utilisateur
+        df['Anomalie_Active'] = df['Anomalie'] & (~df['id'].isin(st.session_state['anomalies_acquittees']))
+        
+        # Compter seulement les anomalies réelles (pas les warnings données manquantes)
+        nb_anomalies_reelles = len(df[(df['Anomalie_Active']) & (df['Severite'] >= 2)])
+        nb_anomalies_legeres = len(df[(df['Anomalie_Active']) & (df['Severite'] == 1)])
+        
+        if nb_anomalies_reelles > 0:
+            with st.expander(f"⚠️ {nb_anomalies_reelles} anomalie(s) majeure(s) détectée(s)", expanded=True):
+                cols = st.columns([2, 1, 3, 1])
+                with cols[0]:
+                    st.error(f"### {nb_anomalies_reelles} problème(s) critique(s)")
+                with cols[1]:
+                    if st.button("🔄 Tout réinitialiser", help="Remettre à zéro les validations"):
+                        st.session_state['anomalies_acquittees'] = []
+                        st.rerun()
+                with cols[2]:
+                    st.caption("Validez les faux positifs pour les masquer définitivement")
+                with cols[3]:
+                    voir_tous = st.checkbox("Voir légers aussi", value=False)
+                
+                # Affichage détaillé des anomalies
+                severite_filtre = 1 if voir_tous else 2
+                df_anom = df[df['Anomalie_Active'] & (df['Severite'] >= severite_filtre)].sort_values('Severite', ascending=False)
+                
+                for idx, row in df_anom.iterrows():
+                    col1, col2, col3, col4 = st.columns([1.5, 1, 4, 1])
+                    with col1:
+                        st.markdown(f"**{row['id']}**")
+                        st.caption(f"{row['race_affichage']}")
+                    with col2:
+                        if row['Severite'] == 3:
+                            st.error("🔴 Critique")
+                        elif row['Severite'] == 2:
+                            st.warning("🟠 Majeur")
+                        else:
+                            st.info("🟡 Mineur")
+                    with col3:
+                        alerte_txt = row['Alerte'] if pd.notna(row['Alerte']) else ""
+                        st.caption(alerte_txt[:120])
+                        if pd.notna(row['p70']) and row['p70'] > 0 and pd.notna(row['c_canon']) and row['c_canon'] > 0:
+                            ratio = row['p70'] / row['c_canon']
+                            st.caption(f"Poids: {row['p70']:.1f}kg | Canon: {row['c_canon']:.1f}cm | Ratio: {ratio:.1f}")
+                    with col4:
+                        if st.button("✓ Validé", key=f"val_{row['id']}", help="C'est normal, ne plus afficher"):
+                            st.session_state['anomalies_acquittees'].append(row['id'])
+                            st.rerun()
+        
+        elif nb_anomalies_legeres > 0:
+            st.info(f"ℹ️ {nb_anomalies_legeres} alerte(s) mineure(s) - vérifiez l'onglet Contrôle Qualité pour les détails")
+        else:
+            st.success("✅ Aucune anomalie détectée - Toutes les données sont cohérentes")
         
         col1, col2, col3, col4 = st.columns(4)
         elite_mask = df['Statut'] == 'ELITE PRO'
@@ -589,7 +659,7 @@ def main():
             st.plotly_chart(fig_corr, use_container_width=True)
     
     # ==========================================
-    # CONTRÔLE QUALITÉ
+    # CONTRÔLE QUALITÉ CORRIGÉ
     # ==========================================
     elif menu == "🔍 Contrôle Qualité":
         st.title("🔍 Validation des Données")
@@ -598,16 +668,81 @@ def main():
             st.info("Pas de données")
             return
         
-        df_anomalies = df[df['Anomalie'] == True]
+        # Configuration des seuils (pour éviter les faux positifs)
+        with st.expander("⚙️ Configuration des seuils de détection", expanded=True):
+            st.info("Ajustez ces valeurs si vos animaux sont systématiquement flaggés comme suspects")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                seuil_z_config = st.slider("Z-Score limite", 1.5, 5.0, 2.5, 0.1,
+                                         help="Plus c'est haut, moins on détecte d'anomalies. Standard: 2.5")
+            with col2:
+                seuil_ratio_config = st.slider("Ratio Poids/Canon max", 6.0, 15.0, 8.0, 0.5,
+                                             help="Au-delà = physiquement impossible. Standard: 8.0")
+            with col3:
+                seuil_gras_config = st.slider("Seuil gras %", 35, 60, 40, 1,
+                                            help="Au-delà = considéré comme anormal. Standard: 40%")
+            
+            if st.button("🔄 Recalculer avec ces seuils"):
+                # Recalcul temporaire
+                df_check = detecter_anomalies(df.copy(), seuil_z_config, seuil_ratio_config)
+                # Mettre à jour l'affichage temporairement
+                st.session_state['df_check_temp'] = df_check
+                st.success("Seuils appliqués (vue temporaire)")
+        
+        # Utiliser les données recalculées si disponibles
+        if 'df_check_temp' in st.session_state:
+            df_check = st.session_state['df_check_temp']
+            st.info("📊 Affichage avec seuils personnalisés (rafraîchir la page pour revenir aux standards)")
+        else:
+            df_check = df
+        
+        # Affichage des anomalies
+        df_anomalies = df_check[df_check['Anomalie'] == True].copy()
         
         if not df_anomalies.empty:
-            st.error(f"⚠️ {len(df_anomalies)} mesures suspectes")
-            st.dataframe(df_anomalies[['id', 'race_affichage', 'p70', 'c_canon', 'Pct_Gras', 'Alerte']], use_container_width=True)
+            st.error(f"⚠️ {len(df_anomalies)} mesures suspectes sur {len(df_check)} animaux")
+            
+            # Tableau détaillé
+            cols_affichage = ['id', 'race_affichage', 'p70', 'c_canon', 'h_garrot', 'Pct_Gras', 'Severite', 'Alerte']
+            cols_existants = [c for c in cols_affichage if c in df_anomalies.columns]
+            
+            # Formatage couleur selon sévérité
+            def color_severite(val):
+                if val == 3:
+                    return 'background-color: #ffcccc; color: darkred; font-weight: bold'
+                elif val == 2:
+                    return 'background-color: #ffe6cc; color: darkorange'
+                elif val == 1:
+                    return 'background-color: #ffffcc; color: #b35900'
+                return ''
+            
+            styled_df = df_anomalies[cols_existants].style.applymap(color_severite, subset=['Severite'])
+            st.dataframe(styled_df, use_container_width=True, height=400)
+            
+            # Statistiques des anomalies
+            st.subheader("Répartition par type d'anomalie")
+            col_stats1, col_stats2, col_stats3 = st.columns(3)
+            with col_stats1:
+                nb_ratio = len(df_anomalies[df_anomalies['Alerte'].str.contains('Ratio', na=False)])
+                st.metric("Ratio impossible", nb_ratio)
+            with col_stats2:
+                nb_zscore = len(df_anomalies[df_anomalies['Alerte'].str.contains('Z-score', na=False)])
+                st.metric("Hors normes statistiques", nb_zscore)
+            with col_stats3:
+                nb_gras = len(df_anomalies[df_anomalies['Alerte'].str.contains('Gras', na=False)])
+                st.metric("Gras excessif", nb_gras)
+                
         else:
-            st.success("✅ Aucune anomalie")
+            st.success("✅ Aucune anomalie détectée avec les critères actuels")
         
-        st.subheader("Statistiques")
-        st.dataframe(df[['p70', 'c_canon', 'Pct_Muscle', 'Pct_Gras', 'Index']].describe(), use_container_width=True)
+        # Statistiques globales
+        st.subheader("Statistiques descriptives")
+        cols_stats = ['p70', 'c_canon', 'h_garrot', 'p_thoracique', 'Pct_Muscle', 'Pct_Gras', 'Index']
+        cols_dispo = [c for c in cols_stats if c in df_check.columns]
+        
+        if cols_dispo:
+            stats_df = df_check[cols_dispo].describe()
+            st.dataframe(stats_df, use_container_width=True)
     
     # ==========================================
     # STATS & ANALYSE
@@ -652,20 +787,20 @@ def main():
                 st.metric("Gras estimé", f"{max(2, gras_estime):.1f} mm")
                 st.metric("Muscle estimé", f"{min(75, muscle_estime):.1f} %")
 
-       # ==========================================
-    # SCANNER
+    # ==========================================
+    # SCANNER DOUBLE MODE
     # ==========================================
     elif menu == "📸 Scanner":
         st.title("📸 Scanner Morphologique")
         
-        # AJOUT : Choix de la méthode
+        # Choix de la méthode
         methode = st.radio("Méthode d'acquisition", 
                           ["📏 Profil par Race (Estimation)", 
                            "🤖 IA Automatique (Caméra + CV)"],
                           horizontal=True,
                           help="Race = Précision +/-3cm | IA = Précision +/-1.5cm avec carte référence")
         
-        # MODE 1: Votre ancien code (Profil par Race)
+        # MODE 1: Profil par Race (Votre ancien code)
         if methode == "📏 Profil par Race (Estimation)":
             col1, col2 = st.columns(2)
             
@@ -719,7 +854,7 @@ def main():
                         st.session_state['go_saisie'] = True
                         st.rerun()
         
-        # MODE 2: Nouveau code IA (à ajouter)
+        # MODE 2: IA Automatique
         else:
             st.info("📋 Placez une carte de crédit (8.5cm) ou objet référence au niveau du garrot")
             
