@@ -145,6 +145,9 @@ def detecter_anomalies(df):
     
     return df
 
+# ==========================================
+# LOGIQUE MÉTIER AVANCÉE
+# ==========================================
 def calculer_composition_carcasse(row):
     try:
         p70 = safe_float(row.get('p70'), 0)
@@ -186,22 +189,16 @@ def calculer_composition_carcasse(row):
         
         if IC > 33 and pct_gras < 18 and gras_mm < 8:
             classe = "S (Supérieur)"
-            score_europ = 5
         elif IC > 31 and pct_gras < 22 and gras_mm < 10:
             classe = "E (Excellent)"
-            score_europ = 4
         elif IC > 29 and pct_gras < 26:
             classe = "U (Très bon)"
-            score_europ = 3
         elif IC > 27 and pct_gras < 30:
             classe = "R (Bon)"
-            score_europ = 2
         elif pct_gras > 35 or IC < 24:
             classe = "P (Médiocre)"
-            score_europ = 0
         else:
             classe = "O (Ordinaire)"
-            score_europ = 1
         
         indice_s90 = pct_muscle * (1 - (pct_gras/200))
         
@@ -372,10 +369,7 @@ def generer_demo(n=30):
                 race_prec = "Possible croisement lourd" if race == "Non identifiée" else None
                 
                 date_estimee = random.choice([0, 1])
-                if date_estimee:
-                    date_nais = (datetime.now() - timedelta(days=100)).strftime("%Y-%m-%d")
-                else:
-                    date_nais = (datetime.now() - timedelta(days=random.randint(80,300))).strftime("%Y-%m-%d")
+                date_nais = (datetime.now() - timedelta(days=random.randint(80,300))).strftime("%Y-%m-%d")
                 
                 c.execute("""
                     INSERT OR IGNORE INTO beliers (id, race, race_precision, date_naiss, date_estimee, objectif, dentition)
@@ -419,9 +413,7 @@ def main():
         st.rerun()
     
     st.sidebar.markdown("---")
-    st.sidebar.caption(f"Seuil Elite: >{SEUILS_PRO['p70_absolu']}kg & >{SEUILS_PRO['canon_absolu']}cm")
     
-    # MENU COMPLET AVEC ADMINISTRATION BDD
     menu = st.sidebar.radio("Menu", [
         "🏠 Dashboard", 
         "🥩 Composition (Écho-like)", 
@@ -429,13 +421,13 @@ def main():
         "📈 Stats & Analyse",
         "📸 Scanner", 
         "✍️ Saisie",
-        "🔧 Administration BDD"  # NOUVEAU
+        "🔧 Administration BDD"
     ])
     
     df = load_data()
     
     # ==========================================
-    # 1. DASHBOARD
+    # DASHBOARD
     # ==========================================
     if menu == "🏠 Dashboard":
         st.title("🏆 Tableau de Bord Professionnel")
@@ -499,7 +491,7 @@ def main():
             st.plotly_chart(fig2, use_container_width=True)
     
     # ==========================================
-    # 2. COMPOSITION (ECHO-LIKE)
+    # COMPOSITION (ECHO-LIKE)
     # ==========================================
     elif menu == "🥩 Composition (Écho-like)":
         st.title("🥩 Analyse Composition Corporelle")
@@ -531,12 +523,12 @@ def main():
             with col2:
                 st.subheader("📏 Mesures Écho-like")
                 
-                                fig_gauge = go.Figure(go.Indicator(
-                    mode = "gauge+number",
-                    value = animal['Gras_mm'],
-                    domain = {'x': [0, 1], 'y': [0, 1]},
-                    title = {'text': "Épaisseur Gras (mm)"},
-                    gauge = {
+                fig_gauge = go.Figure(go.Indicator(
+                    mode="gauge+number",
+                    value=animal['Gras_mm'],
+                    domain={'x': [0, 1], 'y': [0, 1]},
+                    title={'text': "Épaisseur Gras (mm)"},
+                    gauge={
                         'axis': {'range': [None, 25]},
                         'bar': {'color': "orange"},
                         'steps': [
@@ -547,6 +539,7 @@ def main():
                         ]
                     }
                 ))
+                
                 st.plotly_chart(fig_gauge, use_container_width=True)
                 
                 st.metric("Surface Muscle", f"{animal['SMLD']:.1f} cm²")
@@ -566,11 +559,11 @@ def main():
                 """)
                 
                 if animal['Pct_Gras'] < 15:
-                    st.success("✅ Profil maigre")
+                    st.success("Profil maigre")
                 elif animal['Pct_Gras'] < 25:
-                    st.success("✅ Profil optimal")
+                    st.success("Profil optimal")
                 else:
-                    st.warning("⚠️ Profil gras")
+                    st.warning("Profil gras")
         
         st.markdown("---")
         st.subheader("Comparatif Troupeau")
@@ -596,7 +589,7 @@ def main():
             st.plotly_chart(fig_corr, use_container_width=True)
     
     # ==========================================
-    # 3. CONTRÔLE QUALITÉ
+    # CONTRÔLE QUALITÉ
     # ==========================================
     elif menu == "🔍 Contrôle Qualité":
         st.title("🔍 Validation des Données")
@@ -617,7 +610,7 @@ def main():
         st.dataframe(df[['p70', 'c_canon', 'Pct_Muscle', 'Pct_Gras', 'Index']].describe(), use_container_width=True)
     
     # ==========================================
-    # 4. STATS & ANALYSE
+    # STATS & ANALYSE
     # ==========================================
     elif menu == "📈 Stats & Analyse":
         st.title("📈 Analyse Scientifique")
@@ -660,7 +653,7 @@ def main():
                 st.metric("Muscle estimé", f"{min(75, muscle_estime):.1f} %")
 
     # ==========================================
-    # 5. SCANNER
+    # SCANNER
     # ==========================================
     elif menu == "📸 Scanner":
         st.title("📸 Scanner Intelligent")
@@ -718,7 +711,7 @@ def main():
                     st.rerun()
     
     # ==========================================
-    # 6. SAISIE
+    # SAISIE
     # ==========================================
     elif menu == "✍️ Saisie":
         st.title("✍️ Nouvelle Fiche")
@@ -812,26 +805,24 @@ def main():
                         st.error(f"Erreur: {e}")
 
     # ==========================================
-    # 7. ADMINISTRATION BDD (NOUVEAU MODULE COMPLET)
+    # ADMINISTRATION BDD (MODULE COMPLET)
     # ==========================================
     elif menu == "🔧 Administration BDD":
-        st.title("🔧 Administration Base de Données Professionnelle")
-        st.markdown("Gestion complète: Backup, Import/Export, Maintenance")
+        st.title("🔧 Administration Base de Données")
         
         tab1, tab2, tab3, tab4 = st.tabs(["💾 Backup/Restore", "📥 Import CSV", "📤 Export", "🧹 Maintenance"])
         
-        # --- TAB 1: BACKUP/RESTORE ---
         with tab1:
             st.subheader("Sauvegarde et Restauration")
             
             col1, col2 = st.columns(2)
             
             with col1:
-                st.markdown("**💾 Créer une sauvegarde**")
-                backup_name = st.text_input("Nom du fichier", 
+                st.markdown("**Créer backup**")
+                backup_name = st.text_input("Nom fichier", 
                                            value=f"backup_{datetime.now().strftime('%Y%m%d_%H%M')}")
                 
-                if st.button("📦 Créer Backup Compressé", type="primary"):
+                if st.button("📦 Créer Backup", type="primary"):
                     try:
                         backup_dir = "backups"
                         if not os.path.exists(backup_dir):
@@ -840,37 +831,31 @@ def main():
                         backup_path = os.path.join(backup_dir, f"{backup_name}.db")
                         shutil.copy2(DB_NAME, backup_path)
                         
-                        # Compression gzip
                         with open(backup_path, 'rb') as f_in:
                             with gzip.open(f"{backup_path}.gz", 'wb') as f_out:
                                 shutil.copyfileobj(f_in, f_out)
                         os.remove(backup_path)
                         
-                        st.success(f"✅ Backup créé: {backup_name}.db.gz")
+                        st.success(f"Backup créé: {backup_name}.db.gz")
                         
-                        # Bouton téléchargement
                         with open(f"{backup_path}.gz", 'rb') as f:
-                            st.download_button(
-                                label="⬇️ Télécharger",
-                                data=f,
-                                file_name=f"{backup_name}.db.gz",
-                                mime="application/gzip"
-                            )
+                            st.download_button("⬇️ Télécharger", f.read(), 
+                                             file_name=f"{backup_name}.db.gz",
+                                             mime="application/gzip")
                     except Exception as e:
-                        st.error(f"Erreur backup: {e}")
+                        st.error(f"Erreur: {e}")
             
             with col2:
-                st.markdown("**🔄 Restaurer une sauvegarde**")
+                st.markdown("**Restaurer**")
                 uploaded_backup = st.file_uploader("Fichier .db ou .db.gz", type=['db', 'gz'])
                 
                 if uploaded_backup is not None:
-                    st.warning("⚠️ Écrasement de la base actuelle!")
-                    confirm = st.checkbox("Je confirme la restauration")
+                    st.warning("Écrasement de la base actuelle!")
+                    confirm = st.checkbox("Confirmer")
                     
-                    if confirm and st.button("🔄 Restaurer", type="secondary"):
+                    if confirm and st.button("🔄 Restaurer"):
                         try:
-                            # Backup de sécurité auto
-                            security_backup = f"security_backup_{int(time.time())}.db"
+                            security_backup = f"security_{int(time.time())}.db"
                             shutil.copy2(DB_NAME, security_backup)
                             
                             if uploaded_backup.name.endswith('.gz'):
@@ -881,50 +866,36 @@ def main():
                                 with open(DB_NAME, 'wb') as f:
                                     f.write(uploaded_backup.getvalue())
                             
-                            st.success("✅ Base restaurée!")
-                            st.info(f"Sécurité: {security_backup} créé")
+                            st.success("Base restaurée!")
+                            st.info(f"Sécurité: {security_backup}")
                             time.sleep(2)
                             st.rerun()
                         except Exception as e:
                             st.error(f"Erreur: {e}")
         
-        # --- TAB 2: IMPORT CSV ---
         with tab2:
             st.subheader("Import par lot (CSV)")
-            st.info("Format: ID, Race, Poids_J70, Canon, Hauteur, Thorax, etc.")
-            
             uploaded_file = st.file_uploader("Fichier CSV", type=['csv'])
             
             if uploaded_file is not None:
                 try:
                     df_import = pd.read_csv(uploaded_file)
-                    st.write(f"**{len(df_import)} lignes détectées**")
+                    st.write(f"{len(df_import)} lignes détectées")
                     st.dataframe(df_import.head())
                     
-                    # Mapping colonnes
-                    st.subheader("Correspondance des colonnes")
+                    st.subheader("Mapping colonnes")
                     cols = df_import.columns.tolist()
                     cols_options = ['-- Ignorer --'] + cols
                     
                     mapping = {}
-                    col_required = ['id', 'race', 'p70', 'c_canon', 'h_garrot', 'p_thoracique', 'l_poitrine']
-                    defaults = {'p10': 0, 'p30': 0, 'l_corps': 80}
+                    for req in ['id', 'race', 'p70', 'c_canon', 'h_garrot']:
+                        mapping[req] = st.selectbox(f"Colonne {req}", options=cols_options,
+                                                   index=cols.index(req) if req in cols else 0)
                     
-                    for req in col_required:
-                        default_idx = cols.index(req) if req in cols else 0
-                        mapping[req] = st.selectbox(f"Colonne pour {req}", 
-                                                   options=cols_options,
-                                                   index=default_idx)
-                    
-                    if st.button("📥 Valider Import", type="primary"):
+                    if st.button("📥 Importer"):
                         succes = 0
-                        erreurs = []
-                        
-                        progress_bar = st.progress(0)
-                        
                         with get_db_connection() as conn:
                             c = conn.cursor()
-                            
                             for idx, row in df_import.iterrows():
                                 try:
                                     if mapping['id'] == '-- Ignorer --' or pd.isna(row[mapping['id']]):
@@ -935,192 +906,77 @@ def main():
                                     p70 = float(row[mapping['p70']]) if mapping['p70'] != '-- Ignorer --' else 0
                                     cc = float(row[mapping['c_canon']]) if mapping['c_canon'] != '-- Ignorer --' else 0
                                     hg = float(row[mapping['h_garrot']]) if mapping['h_garrot'] != '-- Ignorer --' else 0
-                                    pt = float(row[mapping['p_thoracique']]) if mapping['p_thoracique'] != '-- Ignorer --' else hg*1.2
-                                    lp = float(row[mapping['l_poitrine']]) if mapping['l_poitrine'] != '-- Ignorer --' else 24
                                     
                                     c.execute("INSERT OR REPLACE INTO beliers VALUES (?,?,?,?,?,?,?)",
                                         (animal_id, race, None, datetime.now().strftime("%Y-%m-%d"), 0, "Sélection", "2 Dents"))
-                                    
                                     c.execute("""
-                                        INSERT INTO mesures (id_animal, p10, p30, p70, h_garrot, l_corps, p_thoracique, l_poitrine, c_canon)
-                                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                                    """, (animal_id, 0, 0, p70, hg, 80, pt, lp, cc))
-                                    
+                                        INSERT INTO mesures VALUES (NULL, ?, 0, 0, ?, ?, 80, ?, 24, ?)
+                                    """, (animal_id, p70, hg, hg*1.2, cc))
                                     succes += 1
-                                    progress_bar.progress((idx + 1) / len(df_import))
-                                    
-                                except Exception as e:
-                                    erreurs.append(f"Ligne {idx+2}: {str(e)[:50]}")
+                                except:
+                                    continue
                         
                         if succes > 0:
-                            st.success(f"✅ {succes} animaux importés!")
-                        if erreurs:
-                            with st.expander(f"⚠️ {len(erreurs)} erreurs"):
-                                st.write(erreurs[:10])
-                        if succes > 0:
-                            time.sleep(1)
+                            st.success(f"{succes} animaux importés!")
                             st.rerun()
-                            
                 except Exception as e:
                     st.error(f"Erreur lecture: {e}")
         
-        # --- TAB 3: EXPORT ---
         with tab3:
-            st.subheader("Export des données")
+            st.subheader("Export")
+            format_exp = st.selectbox("Format", ["Excel", "CSV", "SQLite"])
             
-            export_format = st.selectbox("Format", 
-                                        ["Excel multi-onglets (.xlsx)", "CSV (.csv)", "PDF fiche individuelle", "SQLite complet (.db)"])
-            
-            if export_format == "Excel multi-onglets (.xlsx)":
+            if format_exp == "Excel":
                 if st.button("📊 Générer Excel"):
-                    try:
-                        output = io.BytesIO()
-                        
-                        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                            # Onglet 1: Complet
-                            df.to_excel(writer, sheet_name='Données_complètes', index=False)
-                            
-                            # Onglet 2: Elite
-                            if not df.empty:
-                                df[df['Statut'] == 'ELITE PRO'].to_excel(writer, sheet_name='Elite', index=False)
-                                
-                                # Onglet 3: Stats
-                                df[['p70', 'Pct_Muscle', 'Pct_Gras', 'Index']].describe().to_excel(writer, sheet_name='Statistiques')
-                                
-                                # Onglet 4: Anomalies
-                                df[df['Anomalie'] == True].to_excel(writer, sheet_name='Anomalies', index=False)
-                        
-                        st.download_button(
-                            label="⬇️ Télécharger Excel",
-                            data=output.getvalue(),
-                            file_name=f"export_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                        )
-                    except Exception as e:
-                        st.error(f"Installez openpyxl: pip install openpyxl")
+                    output = io.BytesIO()
+                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                        df.to_excel(writer, sheet_name='Complet', index=False)
+                        if not df.empty:
+                            df[df['Statut'] == 'ELITE PRO'].to_excel(writer, sheet_name='Elite', index=False)
+                            df[['p70', 'Pct_Muscle', 'Gras_mm']].describe().to_excel(writer, sheet_name='Stats')
+                    
+                    st.download_button("⬇️ Télécharger", output.getvalue(),
+                                     file_name=f"export_{datetime.now().strftime('%Y%m%d')}.xlsx")
             
-            elif export_format == "CSV (.csv)":
+            elif format_exp == "CSV":
                 csv = df.to_csv(index=False)
-                st.download_button(
-                    label="⬇️ Télécharger CSV",
-                    data=csv,
-                    file_name=f"export_{datetime.now().strftime('%Y%m%d')}.csv",
-                    mime="text/csv"
-                )
+                st.download_button("⬇️ CSV", csv, file_name="export.csv")
             
-            elif export_format == "PDF fiche individuelle":
-                animal_pdf = st.selectbox("Choisir animal", df['id'] if not df.empty else [])
-                
-                if animal_pdf and st.button("📄 Générer PDF"):
-                    try:
-                        from fpdf import FPDF
-                        
-                        animal_data = df[df['id'] == animal_pdf].iloc[0]
-                        
-                        pdf = FPDF()
-                        pdf.add_page()
-                        pdf.set_font("Arial", 'B', 16)
-                        pdf.cell(200, 10, txt=f"FICHE TECHNIQUE - {animal_pdf}", ln=1, align='C')
-                        pdf.ln(10)
-                        
-                        pdf.set_font("Arial", size=12)
-                        pdf.cell(200, 10, txt=f"Race: {animal_data['race_affichage']}", ln=1)
-                        pdf.cell(200, 10, txt=f"Date naissance: {animal_data['date_affichage']}", ln=1)
-                        pdf.cell(200, 10, txt=f"Classe EUROP: {animal_data['Classe_EUROP']}", ln=1)
-                        pdf.cell(200, 10, txt=f"Index global: {animal_data['Index']}/100", ln=1)
-                        pdf.ln(5)
-                        
-                        pdf.set_font("Arial", 'B', 14)
-                        pdf.cell(200, 10, txt="Composition estimée:", ln=1)
-                        pdf.set_font("Arial", size=12)
-                        pdf.cell(200, 10, txt=f"Muscle: {animal_data['Pct_Muscle']}%", ln=1)
-                        pdf.cell(200, 10, txt=f"Gras: {animal_data['Pct_Gras']}%", ln=1)
-                        pdf.cell(200, 10, txt=f"Ossature: {animal_data['Pct_Os']}%", ln=1)
-                        pdf.cell(200, 10, txt=f"Épaisseur gras: {animal_data['Gras_mm']} mm", ln=1)
-                        
-                        pdf_path = f"fiche_{animal_pdf}.pdf"
-                        pdf.output(pdf_path)
-                        
-                        with open(pdf_path, 'rb') as f:
-                            st.download_button(
-                                label="⬇️ Télécharger PDF",
-                                data=f,
-                                file_name=pdf_path,
-                                mime="application/pdf"
-                            )
-                        os.remove(pdf_path)
-                        
-                    except ImportError:
-                        st.error("Installez fpdf: pip install fpdf")
-                    except Exception as e:
-                        st.error(f"Erreur PDF: {e}")
-            
-            elif export_format == "SQLite complet (.db)":
+            else:
                 with open(DB_NAME, 'rb') as f:
-                    st.download_button(
-                        label="⬇️ Télécharger Base SQLite",
-                        data=f,
-                        file_name=f"base_complete_{datetime.now().strftime('%Y%m%d')}.db",
-                        mime="application/octet-stream"
-                    )
+                    st.download_button("⬇️ Base SQLite", f.read(), file_name="database.db")
         
-        # --- TAB 4: MAINTENANCE ---
         with tab4:
-            st.subheader("Maintenance et optimisation")
-            
+            st.subheader("Maintenance")
             col1, col2 = st.columns(2)
             
             with col1:
-                st.markdown("**📊 Statistiques**")
                 try:
                     with get_db_connection() as conn:
                         c = conn.cursor()
-                        
                         c.execute("SELECT COUNT(*) FROM beliers")
                         nb_beliers = c.fetchone()[0]
-                        
                         c.execute("SELECT COUNT(*) FROM mesures")
                         nb_mesures = c.fetchone()[0]
                         
-                        c.execute("SELECT COUNT(DISTINCT id_animal) FROM mesures")
-                        nb_mesures_uniques = c.fetchone()[0]
-                        
-                        c.execute("SELECT AVG(p70) FROM mesures WHERE p70 > 0")
-                        poids_moy = c.fetchone()[0] or 0
-                        
-                        st.metric("Béliers enregistrés", nb_beliers)
-                        st.metric("Total mesures", nb_mesures)
-                        st.metric("Doublons potentiels", nb_mesures - nb_mesures_uniques)
-                        st.metric("Poids moyen", f"{poids_moy:.1f} kg")
-                except Exception as e:
-                    st.error(f"Erreur stats: {e}")
+                        st.metric("Béliers", nb_beliers)
+                        st.metric("Mesures", nb_mesures)
+                except:
+                    pass
             
             with col2:
-                st.markdown("**🧹 Nettoyage**")
-                
-                if st.button("Supprimer anciennes mesures (doublons)", type="secondary"):
+                if st.button("🧹 Nettoyer doublons"):
                     try:
                         with get_db_connection() as conn:
                             c = conn.cursor()
-                            # Garde uniquement la dernière mesure par animal
                             c.execute("""
-                                DELETE FROM mesures 
-                                WHERE id NOT IN (
-                                    SELECT MAX(id) 
-                                    FROM mesures 
-                                    GROUP BY id_animal
-                                )
+                                DELETE FROM mesures WHERE id NOT IN 
+                                (SELECT MAX(id) FROM mesures GROUP BY id_animal)
                             """)
                             deleted = conn.total_changes
-                            st.success(f"{deleted} anciennes mesures supprimées")
+                            st.success(f"{deleted} mesures supprimées")
                     except Exception as e:
                         st.error(f"Erreur: {e}")
-                
-                if st.button("Vider corbeille (suppression définitive)", type="secondary"):
-                    st.warning("Cette action est irréversible!")
-                    if st.checkbox("Confirmer suppression totale"):
-                        # Ici on pourrait ajouter une vraie corbeille dans une v2
-                        st.info("Fonction disponible dans la version Enterprise")
 
 if __name__ == "__main__":
     main()
