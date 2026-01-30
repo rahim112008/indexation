@@ -119,8 +119,8 @@ def main():
             
             st.dataframe(df_filtered[['id', 'race', 'p70', 'Pct_Muscle', 'EUROP', 'S90', 'Statut']].sort_values('p70', ascending=False), use_container_width=True)
 
-    # --- 2. COMPOSITION (VÉRITABLE ANALYSE) ---
-   elif menu == "🥩 Composition":
+# --- 2. COMPOSITION (RECONSTRUCTION PRO) ---
+    elif menu == "🥩 Composition":
         st.title("🥩 Analyse Anatomique Approfondie")
         if not df.empty:
             target = st.selectbox("Sélectionner le sujet à analyser", df['id'].unique())
@@ -129,7 +129,7 @@ def main():
             col_graph, col_info = st.columns([2, 1])
             
             with col_graph:
-                # GRAPHIQUE RADAR (Équilibre des tissus)
+                # GRAPHIQUE RADAR
                 fig_radar = go.Figure()
                 fig_radar.add_trace(go.Scatterpolar(
                     r=[subj['Pct_Muscle'], subj['Pct_Gras'], subj['Pct_Os'], subj['IC']],
@@ -140,20 +140,19 @@ def main():
                                         title=f"Signature Morphologique : {target}")
                 st.plotly_chart(fig_radar, use_container_width=True)
                 
-                # JAUGE DE GRAS DORSAL (Style Échographie)
+                # JAUGE DE GRAS
                 fig_gauge = go.Figure(go.Indicator(
                     mode = "gauge+number",
                     value = subj['Gras_mm'],
                     domain = {'x': [0, 1], 'y': [0, 1]},
-                    title = {'text': "Épaisseur de Gras Dorsal (mm)", 'font': {'size': 18}},
+                    title = {'text': "Épaisseur de Gras Dorsal (mm)"},
                     gauge = {
                         'axis': {'range': [None, 25]},
                         'bar': {'color': "#fb8c00"},
                         'steps': [
                             {'range': [0, 5], 'color': "#e8f5e9"},
                             {'range': [5, 12], 'color': "#fff3e0"},
-                            {'range': [12, 25], 'color': "#ffebee"}],
-                        'threshold': {'line': {'color': "red", 'width': 4}, 'thickness': 0.75, 'value': 18}
+                            {'range': [12, 25], 'color': "#ffebee"}]
                     }
                 ))
                 st.plotly_chart(fig_gauge, use_container_width=True)
@@ -167,12 +166,10 @@ def main():
                     <b>Muscle estimé :</b> {subj['Pct_Muscle']}%<br>
                     <b>Gras estimé :</b> {subj['Pct_Gras']}%<br>
                     <b>Os estimé :</b> {subj['Pct_Os']}%<br><hr>
-                    <b>Indice de Valeur (S90) :</b> {subj['S90']}<br>
-                    <i>Note : Un indice S90 > 60 indique un animal à forte plus-value bouchère.</i>
+                    <b>Indice de Valeur (S90) :</b> {subj['S90']}
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # Petit bar chart horizontal pour la distribution
                 dist_data = pd.DataFrame({
                     'Tissu': ['Muscle', 'Gras', 'Os'],
                     'Pourcentage': [subj['Pct_Muscle'], subj['Pct_Gras'], subj['Pct_Os']]
@@ -180,8 +177,8 @@ def main():
                 fig_bar = px.bar(dist_data, x='Pourcentage', y='Tissu', orientation='h', 
                                  color='Tissu', color_discrete_map={'Muscle':'#2E7D32', 'Gras':'#FFA000', 'Os':'#BDBDBD'})
                 st.plotly_chart(fig_bar, use_container_width=True)
-        else: st.warning("Données absentes.")
-
+        else:
+            st.warning("Données absentes.")
     # --- 3. CONTROLE QUALITE (DÉTECTION D'ERREURS) ---
     elif menu == "🔍 Contrôle Qualité":
         st.title("🔍 Contrôle de Fiabilité des Mesures")
