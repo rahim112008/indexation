@@ -20,7 +20,7 @@ SEUILS_PRO = {
     'p70_absolu': 22.0,
     'canon_absolu': 7.5,
     'percentile_elite': 0.85,
-    'z_score_max': 2.5,
+    'z_score_max': 3.0,  # Augmente a 3.0 pour eviter trop de faux positifs
     'ratio_p70_canon_max': 8.0
 }
 
@@ -116,7 +116,11 @@ def calculer_date_naissance(dentition, date_reference=None):
         return date_naiss, age_jours
     return None, 0
 
-def detecter_anomalies(df, seuil_z=2.5, seuil_ratio=8.0):
+def detecter_anomalies(df, seuil_z=3.0, seuil_ratio=8.0):
+    """
+    Detection d'anomalies avec seuils ajustables.
+    Severite: 3=Critique (impossible), 2=Majeur (hors normes), 1=Leger (gras eleve/missing)
+    """
     if df.empty:
         return df
     
@@ -125,39 +129,42 @@ def detecter_anomalies(df, seuil_z=2.5, seuil_ratio=8.0):
     df['Severite'] = 0
     
     cols_check = ['p70', 'c_canon', 'h_garrot', 'p_thoracique']
+    
     for col in cols_check:
         if col in df.columns and len(df) >= 5:
             std_val = df[col].std()
-            if std_val > 0:
-                z_scores = np.abs((df[col] - df[col].mean()) / std_val)
+            mean_val = df[col].mean()
+            
+            # Protection: ignorer Z-score si trop peu de variance (donnees homogenes)
+            if std_val > 0 and (std_val / mean_val) > 0.05:
+                z_scores = np.abs((df[col] - mean_val) / std_val)
                 mask = z_scores > seuil_z
-                df.loc[mask, 'Anomalie'] = True
-                df.loc[mask, 'Severite'] = np.maximum(df.loc[mask, 'Severite'], 2)
-                for idx in df[mask].index:
-                    z_val = z_scores.loc[idx]
-                    new_alert = col + " anormal (Z:" + str(round(z_val, 1)) + "); "
-                    df.at[idx, 'Alerte'] = df.at[idx, 'Alerte'] + new_alert
+                
+                # Limite: max 15% du troupeau pour eviter tout flagger
+                if mask.sum() <= len(df) * 0.15:
+                    df.loc[mask, 'Anomalie'] = True
+                    df.loc[mask, 'Severite'] = np.maximum(df.loc[mask, 'Severite'], 2)
+                    for idx in df[mask].index:
+                        z_val = z_scores.loc[idx]
+                        new_alert = col + " Z=" + str(round(z_val, 1)) + "; "
+                        df.at[idx, 'Alerte'] = df.at[idx, 'Alerte'] + new_alert
     
+    # Ratio poids/canon - CRITIQUE (physiquement impossible)
     mask_ratio = (df['p70'] / df['c_canon'] > seuil_ratio) & (df['c_canon'] > 0) & (df['p70'] > 0)
     df.loc[mask_ratio, 'Anomalie'] = True
     df.loc[mask_ratio, 'Severite'] = 3
-    df.loc[mask_ratio, 'Alerte'] = df.loc[mask_ratio, 'Alerte'] + "Ratio poids/canon impossible; "
+    df.loc[mask_ratio, 'Alerte'] = df.loc[mask_ratio, 'Alerte'] + "Ratio poids/canon impossible (>8); "
     
+    # Gras excessif - WARNING seulement (pas anomalie critique)
     if 'Pct_Gras' in df.columns:
-        mask_gras = df['Pct_Gras'] > 40
-        df.loc[mask_gras, 'Anomalie'] = True
+        mask_gras = df['Pct_Gras'] > 45  # Tres eleve
+        df.loc[mask_gras, 'Alerte'] = df.loc[mask_gras, 'Alerte'] + "Gras excessif (>45%); "
         df.loc[mask_gras, 'Severite'] = np.maximum(df.loc[mask_gras, 'Severite'], 1)
-        for idx in df[mask_gras].index:
-            g_val = df.at[idx, 'Pct_Gras']
-            gras_str = "Gras excessif (" + str(round(g_val, 1)) + "%); "
-            df.at[idx, 'Alerte'] = df.at[idx, 'Alerte'] + gras_str
     
-    mask_null_p70 = (df['p70'] == 0) | (df['p70'].isna())
-    mask_null_cc = (df['c_canon'] == 0) | (df['c_canon'].isna())
-    for idx in df[mask_null_p70].index:
-        df.at[idx, 'Alerte'] = df.at[idx, 'Alerte'] + "Poids manquant;"
-    for idx in df[mask_null_cc].index:
-        df.at[idx, 'Alerte'] = df.at[idx, 'Alerte'] + "Canon manquant;"
+    # Donnees manquantes - Information uniquement
+    mask_null = (df['p70'] == 0) | (df['c_canon'] == 0)
+    df.loc[mask_null, 'Alerte'] = df.loc[mask_null, 'Alerte'] + "Donnees incomplete;"
+    # NOTE: On ne met PAS Anomalie=True pour donnees manquantes seules
     
     return df
 
@@ -370,18 +377,18 @@ def generer_demo(n=30):
                 # Tirage au sort du profil
                 rand = random.random()
                 is_super = rand < 0.20      # 20% Elite
-                is_anomalie = rand > 0.95   # 5% Anomalie (0.95 à 1.0)
+                is_anomalie = rand > 0.95   # 5% Anomalie (0.95 a 1.0)
                 
                 if is_super:
-                    # PROFIL ELITE : Gros, musclé, conformation exceptionnelle
+                    # PROFIL ELITE : Gros, muscle, conformation exceptionnelle
                     p10 = round(random.uniform(5.5, 6.5), 1)
                     p30 = round(p10 + random.uniform(13, 16), 1)  # Bon GMQ
-                    p70 = round(random.uniform(42, 52), 1)        # Poids élevé
+                    p70 = round(random.uniform(42, 52), 1)        # Poids eleve
                     cc = round(random.uniform(9.5, 11.5), 1)      # Gros canon
                     hg = round(76 + random.uniform(0, 3), 1)      # Grand gabarit
                     
                 elif is_anomalie:
-                    # PROFIL ANOMALIE : Données incohérentes (ex: trop léger vs âge, ou canon/poids impossible)
+                    # PROFIL ANOMALIE : Donnees incoherentes
                     choix_anomalie = random.choice(['leg', 'canon'])
                     if choix_anomalie == 'leg':
                         p10 = round(random.uniform(3.0, 4.0), 1)   # Trop petit
@@ -403,7 +410,7 @@ def generer_demo(n=30):
                     cc = round(7.8 + random.uniform(-0.5, 0.8), 1) # 8cm moyen
                     hg = round(70 + random.uniform(-2, 3), 1)      # 70-73cm standard
                 
-                # Calculs dérivés cohérents pour tous les profils
+                # Calculs derives coherents pour tous les profils
                 pt = round(hg * 1.15 + random.uniform(-2, 2), 1)
                 lp = round(24 + (p70 * 0.05), 1)
                 lc = round(78 + (p70/40)*6, 1)  # Longueur proportionnelle au poids
@@ -506,7 +513,7 @@ def main():
                         st.session_state['anomalies_acquittees'].append(row['id'])
                         st.rerun()
         else:
-            st.success("Aucune anomalie detectee")
+            st.success("Aucune anomalie majeure detectee")
         
         col1, col2, col3, col4 = st.columns(4)
         elite_mask = df['Statut'] == 'ELITE PRO'
@@ -666,189 +673,111 @@ def main():
                 st.warning("Profil gras")
     
     # ==========================================
-    # CONTROLE QUALITE
+    # CONTROLE QUALITE - CORRIGE
     # ==========================================
     elif menu == "Controle Qualite":
         st.title("Validation des Donnees")
         
         if df.empty:
-            st.info("Pas de donnees")
+            st.info("Pas de donnees disponibles")
             return
         
-        with st.expander("Configuration des seuils", expanded=True):
-            col1, col2 = st.columns(2)
-            with col1:
-                seuil_z = st.slider("Z-Score", 1.0, 5.0, 2.5, 0.1)
-            with col2:
-                seuil_r = st.slider("Ratio max", 5.0, 15.0, 8.0, 0.5)
-            
-            if st.button("Recalculer"):
-                df = detecter_anomalies(df, seuil_z, seuil_r)
-                st.session_state['df_check'] = df
-                st.success("Recalcule effectue")
+        # Configuration et filtres
+        col_filtre, col_conf = st.columns([1, 2])
         
-        if 'df_check' in st.session_state:
-            df = st.session_state['df_check']
+        with col_filtre:
+            voir_seulement = st.selectbox(
+                "Afficher les alertes",
+                options=[
+                    "Toutes (y compris legeres)", 
+                    "Anomalies majeures seulement (Rouge)", 
+                    "Problemes critiques uniquement (Noir)"
+                ],
+                help="Filtrez pour voir seulement les vrais problemes"
+            )
         
-        df_anom = df[df['Anomalie'] == True]
-        if not df_anom.empty:
-            st.error(str(len(df_anom)) + " anomalies detectees")
-            st.dataframe(df_anom[['id', 'p70', 'c_canon', 'Alerte']], use_container_width=True)
-        else:
-            st.success("Aucune anomalie")
-        
-        st.subheader("Statistiques")
-        st.dataframe(df[['p70', 'c_canon', 'Pct_Muscle', 'Pct_Gras']].describe())
-    
-    # ==========================================
-    # STATS & ANALYSE
-    # ==========================================
-    elif menu == "Stats":
-        st.title("Analyse Scientifique")
-        
-        if df.empty or len(df) < 3:
-            st.warning("Minimum 3 animaux requis")
-            return
-        
-        tab1, tab2 = st.tabs(["Correlations", "Performance Race"])
-        
-        with tab1:
-            vars_stats = ['p70', 'Gras_mm', 'Pct_Muscle', 'IC']
-            valid_vars = [v for v in vars_stats if v in df.columns and df[v].std() > 0]
-            if len(valid_vars) >= 2:
-                corr = df[valid_vars].corr()
-                fig = px.imshow(corr, text_auto=".2f", aspect="auto")
-                st.plotly_chart(fig, use_container_width=True)
-        
-        with tab2:
-            if df['race'].nunique() > 1:
-                fig = px.box(df, x="race", y="Pct_Muscle")
-                st.plotly_chart(fig, use_container_width=True)
-
-    # ==========================================
-    # SCANNER
-    # ==========================================
-    elif menu == "Scanner":
-        st.title("Scanner Morphologique")
-        
-        methode = st.radio("Methode", ["Profil Race", "IA Automatique"])
-        
-        if methode == "Profil Race":
-            col1, col2 = st.columns(2)
-            with col1:
-                img = st.camera_input("Photo")
-            with col2:
-                race = st.selectbox("Race", ["Ouled Djellal", "Rembi", "Hamra", "Non identifiee"])
-                corr = st.slider("Ajustement", -10, 10, 0)
+        with col_conf:
+            with st.expander("Configuration des seuils de detection", expanded=True):
+                col1, col2, col3 = st.columns(3)
                 
-                if img:
-                    DATA_RACES = {
-                        "Ouled Djellal": {"h_garrot": 72.0, "c_canon": 8.0, "l_poitrine": 24.0, "p_thoracique": 83.0, "l_corps": 82.0},
-                        "Rembi": {"h_garrot": 76.0, "c_canon": 8.8, "l_poitrine": 26.0, "p_thoracique": 88.0, "l_corps": 86.0},
-                        "Hamra": {"h_garrot": 70.0, "c_canon": 7.8, "l_poitrine": 23.0, "p_thoracique": 80.0, "l_corps": 78.0},
-                        "Non identifiee": {"h_garrot": 73.0, "c_canon": 8.1, "l_poitrine": 24.5, "p_thoracique": 84.0, "l_corps": 82.5}
-                    }
-                    base = DATA_RACES[race].copy()
-                    if corr != 0:
-                        f = 1 + (corr / 100)
-                        for k in base:
-                            base[k] = base[k] * f
+                with col1:
+                    seuil_z = st.slider(
+                        "Z-Score (sensibilite)", 
+                        min_value=2.0, 
+                        max_value=5.0, 
+                        value=3.0, 
+                        step=0.1,
+                        help="3.0 = standard | 2.5 = strict (plus d'alertes) | 4.0 = tolerant"
+                    )
+                
+                with col2:
+                    seuil_r = st.slider(
+                        "Ratio Poids/Canon max", 
+                        min_value=6.0, 
+                        max_value=12.0, 
+                        value=8.0, 
+                        step=0.5,
+                        help="Au-dela = physiquement impossible"
+                    )
+                
+                with col3:
+                    seuil_gras = st.slider(
+                        "Seuil gras % (warning)", 
+                        min_value=35, 
+                        max_value=50, 
+                        value=45, 
+                        step=1,
+                        help="Au-dela = flaggue comme gras excessif"
+                    )
+                
+                if st.button("Recalculer avec ces seuils", type="primary"):
+                    # Recalcul temporaire avec nouveaux seuils
+                    df_temp = detecter_anomalies(df.copy(), seuil_z=seuil_z, seuil_ratio=seuil_r)
+                    # Appliquer aussi le seuil gras custom
+                    if 'Pct_Gras' in df_temp.columns:
+                        mask_gras = df_temp['Pct_Gras'] > seuil_gras
+                        df_temp.loc[mask_gras, 'Alerte'] = df_temp.loc[mask_gras, 'Alerte'] + "Gras eleve (>" + str(seuil_gras) + "%); "
+                        df_temp.loc[mask_gras, 'Severite'] = np.maximum(df_temp.loc[mask_gras, 'Severite'], 1)
                     
-                    st.session_state['scan'] = base
-                    st.json(base)
-                    if st.button("Transferer vers Saisie"):
-                        st.session_state['go_saisie'] = True
-                        st.rerun()
-    
-    # ==========================================
-    # SAISIE
-    # ==========================================
-    elif menu == "Saisie":
-        st.title("Nouvelle Fiche")
+                    st.session_state['df_filtered'] = df_temp
+                    st.success("Recalcul effectue!")
         
-        scan = st.session_state.get('scan', {})
-        if st.session_state.get('go_saisie'):
-            st.success("Donnees importees!")
-            st.session_state['go_saisie'] = False
+        # Utiliser le dataframe filtre si disponible, sinon original
+        if 'df_filtered' in st.session_state:
+            df_display = st.session_state['df_filtered']
+        else:
+            df_display = df
         
-        with st.form("form_saisie"):
-            col_id1, col_id2 = st.columns(2)
-            
-            with col_id1:
-                id_animal = st.text_input("ID", placeholder="REF-2024-001")
-                race = st.selectbox("Race", ["Ouled Djellal", "Rembi", "Hamra", "Croise", "Non identifiee"])
-            
-            with col_id2:
-                date_naiss = st.date_input("Date naissance", datetime.now() - timedelta(days=100))
-                objectif = st.selectbox("Objectif", ["Selection", "Engraissement"])
-            
-            st.subheader("Poids")
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                p10 = st.number_input("J10", 0.0, 20.0, 0.0)
-            with c2:
-                p30 = st.number_input("J30", 0.0, 40.0, 0.0)
-            with c3:
-                p70 = st.number_input("J70", 0.0, 100.0, 0.0)
-            
-            st.subheader("Mensurations")
-            cols = st.columns(5)
-            mens = {}
-            fields = [('h_garrot', 'Hauteur'), ('c_canon', 'Canon'), ('l_poitrine', 'Larg.Poitrine'), 
-                     ('p_thoracique', 'Per.Thorax'), ('l_corps', 'Long.Corps')]
-            
-            for i, (key, label) in enumerate(fields):
-                with cols[i]:
-                    mens[key] = st.number_input(label, 0.0, 200.0, float(scan.get(key, 0.0)), key=key)
-            
-            if st.form_submit_button("Enregistrer"):
-                if not id_animal or p70 <= 0:
-                    st.error("ID et Poids obligatoires!")
-                else:
-                    try:
-                        with get_db_connection() as conn:
-                            c = conn.cursor()
-                            c.execute("""
-                                INSERT OR REPLACE INTO beliers (id, race, date_naiss, objectif)
-                                VALUES (?, ?, ?, ?)
-                            """, (id_animal, race, date_naiss.strftime("%Y-%m-%d"), objectif))
-                            
-                            c.execute("""
-                                INSERT INTO mesures (id_animal, p10, p30, p70, h_garrot, l_corps, p_thoracique, l_poitrine, c_canon)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            """, (id_animal, p10, p30, p70, mens['h_garrot'], 
-                                  mens['l_corps'], mens['p_thoracique'], mens['l_poitrine'], mens['c_canon']))
-                        
-                        st.success("Enregistre!")
-                        time.sleep(1)
-                        st.rerun()
-                    except Exception as e:
-                        st.error("Erreur: " + str(e))
-
-    # ==========================================
-    # ADMINISTRATION
-    # ==========================================
-    elif menu == "Administration":
-        st.title("Administration BDD")
+        # Application du filtre d'affichage
+        if voir_seulement == "Problemes critiques uniquement (Noir)":
+            df_display = df_display[df_display['Severite'] == 3]
+        elif voir_seulement == "Anomalies majeures seulement (Rouge)":
+            df_display = df_display[df_display['Severite'] >= 2]
+        # Sinon: afficher tout (y compris severity 1 et 0)
         
-        tab1, tab2 = st.tabs(["Backup", "Export"])
+        # Comptage par niveau
+        nb_critiques = len(df_display[df_display['Severite'] == 3])
+        nb_majeures = len(df_display[df_display['Severite'] == 2])
+        nb_legeres = len(df_display[df_display['Severite'] == 1])
+        nb_ok = len(df_display[df_display['Severite'] == 0])
         
-        with tab1:
-            if st.button("Creer Backup"):
-                try:
-                    backup_dir = "backups"
-                    if not os.path.exists(backup_dir):
-                        os.makedirs(backup_dir)
-                    backup_path = os.path.join(backup_dir, "backup_" + datetime.now().strftime('%Y%m%d_%H%M') + ".db")
-                    shutil.copy2(DB_NAME, backup_path)
-                    st.success("Cree: " + backup_path)
-                except Exception as e:
-                    st.error(str(e))
+        # Resume
+        st.markdown("---")
+        res_cols = st.columns(4)
+        with res_cols[0]:
+            st.error("🔴 Critiques: " + str(nb_critiques))
+        with res_cols[1]:
+            st.warning("🟠 Majeures: " + str(nb_majeures))
+        with res_cols[2]:
+            st.info("🟡 Legeres: " + str(nb_legeres))
+        with res_cols[3]:
+            st.success("🟢 Normaux: " + str(nb_ok))
         
-        with tab2:
-            if st.button("Exporter CSV"):
-                csv = df.to_csv(index=False)
-                st.download_button("Telecharger CSV", csv, file_name="export.csv")
-
-if __name__ == "__main__":
-    main()
+        # Affichage du tableau
+        if len(df_display) > 0:
+            # Preparer les colonnes a afficher
+            cols_base = ['id', 'race_affichage', 'p70', 'c_canon', 'Pct_Gras', 'Severite', 'Alerte']
+            cols_dispo = [c for c in cols_base if c in df_display.columns]
+            
+            # Fonction de coloration
+            def color
