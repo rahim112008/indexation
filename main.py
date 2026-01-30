@@ -191,30 +191,103 @@ def main():
             st.warning("Veuillez sélectionner ou enregistrer un animal.")
 
     elif menu == "✍️ Saisie":
-        st.title("✍️ Nouvelle Saisie de Données")
-        with st.form("saisie_form"):
-            c1, c2 = st.columns(2)
-            with c1:
-                aid = st.text_input("Identifiant (ID) *")
-                race = st.selectbox("Race", ["Ouled Djellal", "Rembi", "Hamra", "Croisé"])
-            with c2:
-                p30 = st.number_input("Poids J30 (kg)", 0.0)
-                p70 = st.number_input("Poids J70 / Actuel (kg) *", 0.0)
+        st.title("✍️ Nouvelle Fiche Animal")
+        
+        # Récupération des données du scanner si elles existent
+        scan = st.session_state.get('scan', {})
+        if st.session_state.get('go_saisie'):
+            st.success("✨ Données du scanner importées avec succès !")
+            st.session_state['go_saisie'] = False
+
+        # Fonction interne pour l'estimation de l'âge (si pas définie ailleurs)
+        def estimer_date(dent):
+            mois = {"2 Dents": 15, "4 Dents": 21, "6 Dents": 27, "Pleine bouche": 36}
+            nb_mois = mois.get(dent, 12)
+            return datetime.now() - timedelta(days=nb_mois*30)
+
+        with st.form("form_saisie", clear_on_submit=True):
+            col_id1, col_id2 = st.columns(2)
             
-            st.markdown("---")
-            m1, m2, m3 = st.columns(3)
-            hg = m1.number_input("Hauteur Garrot (cm)", 0.0)
-            cc = m2.number_input("Circonférence Canon (cm)", 0.0)
-            pt = m3.number_input("Périmètre Thoracique (cm)", 0.0)
+            with col_id1:
+                id_animal = st.text_input("ID de l'animal *", placeholder="Ex: OD-2024-001")
+                race_options = ["Ouled Djellal", "Rembi", "Hamra", "Babarine", "Croisé", "Non identifiée"]
+                race = st.selectbox("Race principale *", race_options)
+                
+                race_precision = st.text_input("Précision (si croisé)", placeholder="Ex: OD x Rembi") if race in ["Non identifiée", "Croisé"] else ""
             
-            if st.form_submit_button("💾 Enregistrer dans la Base"):
-                if aid and p70 > 0 and hg > 0 and cc > 0:
-                    with get_db_connection() as conn:
-                        conn.execute("INSERT OR REPLACE INTO beliers (id, race) VALUES (?,?)", (aid, race))
-                        conn.execute("INSERT INTO mesures (id_animal, p30, p70, h_garrot, c_canon, p_thoracique) VALUES (?,?,?,?,?,?)", (aid, p30, p70, hg, cc, pt))
-                    st.success(f"Animal {aid} enregistré !"); time.sleep(1); st.rerun()
+            with col_id2:
+                methode_age = st.radio("Détermination de l'âge", ["Date exacte", "Estimation par dentition"])
+                date_naiss = datetime.now()
+                date_estimee_flag = 0
+                
+                if methode_age == "Date exacte":
+                    date_naiss = st.date_input("Date de naissance", datetime.now() - timedelta(days=100))
+                    dentition = st.selectbox("État dentition", ["Agneau", "2 Dents", "4 Dents", "6 Dents", "Pleine bouche"])
                 else:
-                    st.error("Veuillez remplir tous les champs marqués d'une * et les mesures.")
+                    dentition = st.selectbox("Observer la dentition *", ["2 Dents", "4 Dents", "6 Dents", "Pleine bouche"])
+                    date_naiss = estimer_date(dentition)
+                    date_estimee_flag = 1
+                    st.caption(f"📅 Âge estimé : ~{date_naiss.strftime('%m/%Y')}")
+                
+                objectif = st.selectbox("Objectif final", ["Sélection (Elite)", "Engraissement", "Reproduction"])
+            
+            st.divider()
+            st.subheader("⚖️ Poids (kg)")
+            c1, c2, c3 = st.columns(3)
+            with c1: p10 = st.number_input("Poids J10", 0.0, 30.0, 0.0)
+            with c2: p30 = st.number_input("Poids J30", 0.0, 50.0, 0.0)
+            with c3:
+                label_p70 = "Poids ACTUEL *" if date_estimee_flag else "Poids J70 *"
+                p70 = st.number_input(label_p70, 0.0, 150.0, 0.0)
+            
+            st.subheader("📏 Mensurations Morphologiques (cm)")
+            st.info("💡 Ces mesures sont cruciales pour l'estimation du rendement en viande.")
+            cols = st.columns(5)
+            fields = [('h_garrot', 'Hauteur'), ('c_canon', 'Canon'), ('l_poitrine', 'Larg.Poitrine'), 
+                     ('p_thoracique', 'Pér.Thorax'), ('l_corps', 'Long.Corps')]
+            
+            mens = {}
+            for i, (key, label) in enumerate(fields):
+                with cols[i]:
+                    # On priorise la valeur du scan, sinon 0.0
+                    default_val = float(scan.get(key, 0.0))
+                    mens[key] = st.number_input(label, 0.0, 150.0, default_val)
+            
+            if st.form_submit_button("💾 ENREGISTRER L'ANIMAL", type="primary"):
+                # VALIDATION STRICTE
+                if not id_animal:
+                    st.error("❌ L'identifiant est obligatoire.")
+                elif p70 <= 5:
+                    st.error("❌ Le poids actuel semble incorrect.")
+                elif mens['c_canon'] <= 2 or mens['h_garrot'] <= 10:
+                    st.error("❌ Les mensurations (Canon/Hauteur) sont obligatoires pour les calculs de viande.")
+                else:
+                    try:
+                        with get_db_connection() as conn:
+                            # 1. Table des béliers
+                            conn.execute("""
+                                INSERT OR REPLACE INTO beliers 
+                                (id, race, race_precision, date_naiss, date_estimee, objectif, dentition)
+                                VALUES (?, ?, ?, ?, ?, ?, ?)
+                            """, (id_animal, race, race_precision, date_naiss.strftime("%Y-%m-%d"), 
+                                  date_estimee_flag, objectif, dentition))
+                            
+                            # 2. Table des mesures
+                            conn.execute("""
+                                INSERT INTO mesures 
+                                (id_animal, p10, p30, p70, h_garrot, l_corps, p_thoracique, l_poitrine, c_canon)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """, (id_animal, p10, p30, p70, mens['h_garrot'], 
+                                  mens['l_corps'], mens['p_thoracique'], mens['l_poitrine'], mens['c_canon']))
+                        
+                        st.success(f"✅ Sujet {id_animal} enregistré avec succès !")
+                        st.balloons()
+                        # Nettoyage
+                        if 'scan' in st.session_state: del st.session_state['scan']
+                        time.sleep(1)
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Erreur base de données : {e}")
 
     elif menu == "🔧 Admin":
         st.title("🔧 Administration")
