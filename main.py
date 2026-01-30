@@ -357,32 +357,62 @@ def load_data():
         return pd.DataFrame()
 
 def generer_demo(n=30):
-    races = ["Ouled Djellal", "Rembi", "Hamra", "Non identifiee"]
+    """
+    Generation avec 20% d'elites, 5% d'anomalies, 75% standard
+    """
+    races = ["Ouled Djellal", "Rembi", "Hamra"]
     count = 0
     
     with get_db_connection() as conn:
         c = conn.cursor()
         for i in range(n):
             try:
-                is_anomalie = random.random() < 0.05
-                p10 = round(random.uniform(4.0, 6.5), 1)
-                p30 = round(p10 + random.uniform(9, 13), 1)
+                # Tirage au sort du profil
+                rand = random.random()
+                is_super = rand < 0.20      # 20% Elite
+                is_anomalie = rand > 0.95   # 5% Anomalie (0.95 à 1.0)
                 
-                if is_anomalie:
-                    p70 = round(random.uniform(15, 50), 1)
-                    cc = round(random.uniform(5, 15), 1)
+                if is_super:
+                    # PROFIL ELITE : Gros, musclé, conformation exceptionnelle
+                    p10 = round(random.uniform(5.5, 6.5), 1)
+                    p30 = round(p10 + random.uniform(13, 16), 1)  # Bon GMQ
+                    p70 = round(random.uniform(42, 52), 1)        # Poids élevé
+                    cc = round(random.uniform(9.5, 11.5), 1)      # Gros canon
+                    hg = round(76 + random.uniform(0, 3), 1)      # Grand gabarit
+                    
+                elif is_anomalie:
+                    # PROFIL ANOMALIE : Données incohérentes (ex: trop léger vs âge, ou canon/poids impossible)
+                    choix_anomalie = random.choice(['leg', 'canon'])
+                    if choix_anomalie == 'leg':
+                        p10 = round(random.uniform(3.0, 4.0), 1)   # Trop petit
+                        p30 = round(p10 + random.uniform(5, 8), 1)
+                        p70 = round(random.uniform(18, 24), 1)     # Non viable
+                        cc = round(random.uniform(7.0, 8.5), 1)
+                        hg = round(62 + random.uniform(-2, 2), 1)
+                    else:  # canon anormal
+                        p10 = round(random.uniform(4.5, 6.0), 1)
+                        p30 = round(p10 + random.uniform(9, 13), 1)
+                        p70 = round(random.uniform(35, 45), 1)
+                        cc = round(random.uniform(4.5, 6.0), 1)    # Canon trop fin pour le poids
+                        hg = round(68 + random.uniform(-2, 2), 1)
                 else:
-                    p70 = round(p30 + random.uniform(18, 26), 1)
-                    cc = round(7.5 + (p70/35)*3 + random.uniform(-0.5, 0.5), 1)
+                    # PROFIL STANDARD : Performances moyennes
+                    p10 = round(random.uniform(4.5, 6.0), 1)
+                    p30 = round(p10 + random.uniform(9, 13), 1)
+                    p70 = round(random.uniform(28, 38), 1)        # 30-35kg moyenne
+                    cc = round(7.8 + random.uniform(-0.5, 0.8), 1) # 8cm moyen
+                    hg = round(70 + random.uniform(-2, 3), 1)      # 70-73cm standard
                 
-                hg = round(65 + (p70/35)*8 + random.uniform(-2, 2), 1)
-                pt = round(hg * 1.15 + random.uniform(-3, 3), 1)
-                lp = round(20 + (p70 * 0.05), 1)
-                lc = round(75 + (p70/35)*8, 1)
+                # Calculs dérivés cohérents pour tous les profils
+                pt = round(hg * 1.15 + random.uniform(-2, 2), 1)
+                lp = round(24 + (p70 * 0.05), 1)
+                lc = round(78 + (p70/40)*6, 1)  # Longueur proportionnelle au poids
                 
                 animal_id = "REF-2024-" + str(1000+i)
                 race = random.choice(races)
-                race_prec = "Possible croisement lourd" if race == "Non identifiee" else None
+                race_prec = None
+                if race == "Non identifiee":
+                    race_prec = "Possible croisement"
                 
                 date_estimee = random.choice([0, 1])
                 date_nais = (datetime.now() - timedelta(days=random.randint(80,300))).strftime("%Y-%m-%d")
@@ -397,8 +427,10 @@ def generer_demo(n=30):
                     VALUES (?,?,?,?,?,?,?,?,?)
                 """, (animal_id, p10, p30, p70, hg, lc, pt, lp, cc))
                 count += 1
-            except:
+                
+            except Exception as e:
                 continue
+                
     return count
 
 # ==========================================
@@ -413,6 +445,10 @@ def main():
     df_temp = load_data()
     if not df_temp.empty:
         st.sidebar.metric("Sujets en base", len(df_temp))
+        # Afficher combien d'elites
+        nb_elites = len(df_temp[df_temp['Statut'] == 'ELITE PRO'])
+        if nb_elites > 0:
+            st.sidebar.success(str(nb_elites) + " elites detectes")
     
     if st.sidebar.button("Generer 30 sujets test", use_container_width=True):
         with st.spinner("Creation..."):
@@ -495,7 +531,7 @@ def main():
         st.dataframe(df_display, use_container_width=True, height=500)
     
     # ==========================================
-    # COMPOSITION (ECHO-LIKE) - VERSION CORRIGEE
+    # COMPOSITION (ECHO-LIKE)
     # ==========================================
     elif menu == "Composition":
         st.title("Analyse Composition Corporelle")
@@ -504,13 +540,11 @@ def main():
             st.warning("Pas de donnees disponibles")
             return
         
-        # Selection avec verification
         animal_id = st.selectbox("Selectionner un animal", df['id'].tolist())
         
         if not animal_id:
             return
             
-        # Recuperation securisee
         animal_data = df[df['id'] == animal_id]
         if animal_data.empty:
             st.error("Animal introuvable")
@@ -518,14 +552,11 @@ def main():
             
         animal = animal_data.iloc[0]
         
-        # Colonnes pour layout
         col1, col2, col3 = st.columns(3)
         
-        # ========== COLONNE 1: COMPOSITION ==========
         with col1:
             st.subheader("Composition Carcasse")
             
-            # Extraction securisee des valeurs
             val_muscle = 0.0
             val_gras = 0.0
             val_os = 0.0
@@ -540,23 +571,19 @@ def main():
             except:
                 pass
             
-            # Protection contre negatives
             val_muscle = max(0.0, val_muscle)
             val_gras = max(0.0, val_gras)
             val_os = max(0.0, val_os)
             
-            # Calcul autres
             total = val_muscle + val_gras + val_os
             val_autres = max(0.0, 100.0 - total)
             
-            # Normalisation si > 100
             if total > 100.0:
                 val_muscle = val_muscle * 100.0 / total
                 val_gras = val_gras * 100.0 / total
                 val_os = val_os * 100.0 / total
                 val_autres = 0.0
             
-            # Affichage graphique uniquement si valeurs valides
             if total > 0:
                 try:
                     fig = go.Figure(data=[go.Pie(
@@ -576,15 +603,12 @@ def main():
             else:
                 st.info("Donnees composition insuffisantes")
             
-            # Metriques textuelles
             st.metric("Classe EUROP", str(animal.get('Classe_EUROP', 'N/A')))
             st.metric("Indice S90", str(round(float(animal.get('Indice_S90', 0)), 1)))
         
-        # ========== COLONNE 2: MESURES ==========
         with col2:
             st.subheader("Mesures Echographie")
             
-            # Gras mm
             gras_mm = 0.0
             try:
                 if 'Gras_mm' in animal and pd.notna(animal['Gras_mm']):
@@ -617,14 +641,12 @@ def main():
             else:
                 st.info("Donnee gras non disponible")
             
-            # Autres mesures
             smld = float(animal.get('SMLD', 0)) if pd.notna(animal.get('SMLD')) else 0
             ic = float(animal.get('IC', 0)) if pd.notna(animal.get('IC')) else 0
             
             st.metric("Surface Muscle", str(round(smld, 1)) + " cm2")
             st.metric("Indice Conformation", str(round(ic, 2)))
         
-        # ========== COLONNE 3: INFOS ==========
         with col3:
             st.subheader("Informations")
             
