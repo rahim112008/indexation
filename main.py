@@ -120,21 +120,67 @@ def main():
             st.dataframe(df_filtered[['id', 'race', 'p70', 'Pct_Muscle', 'EUROP', 'S90', 'Statut']].sort_values('p70', ascending=False), use_container_width=True)
 
     # --- 2. COMPOSITION (VÉRITABLE ANALYSE) ---
-    elif menu == "🥩 Composition":
-        st.title("🥩 Analyse de la Carcasse")
+   elif menu == "🥩 Composition":
+        st.title("🥩 Analyse Anatomique Approfondie")
         if not df.empty:
-            animal_id = st.selectbox("Sélectionner l'ID de l'animal", df['id'].unique())
-            subject = df[df['id'] == animal_id].iloc[0]
+            target = st.selectbox("Sélectionner le sujet à analyser", df['id'].unique())
+            subj = df[df['id'] == target].iloc[0]
             
-            col1, col2 = st.columns(2)
-            with col1:
-                fig_pie = px.pie(names=['Muscle', 'Gras', 'Os'], values=[subject['Pct_Muscle'], subject['Pct_Gras'], subject['Pct_Os']],
-                                 color_discrete_sequence=['#2E7D32', '#FFA000', '#BDBDBD'], hole=0.4, title="Anatomie Estimée")
-                st.plotly_chart(fig_pie, use_container_width=True)
-            with col2:
-                st.markdown(f"<div class='metric-card'><p>Indice de Conformation</p><h2>{subject['IC']}</h2></div>", unsafe_allow_html=True)
-                st.markdown(f"<div class='metric-card'><p>Classe EUROP</p><h2>{subject['EUROP']}</h2></div>", unsafe_allow_html=True)
-        else: st.warning("Aucune donnée disponible.")
+            col_graph, col_info = st.columns([2, 1])
+            
+            with col_graph:
+                # GRAPHIQUE RADAR (Équilibre des tissus)
+                fig_radar = go.Figure()
+                fig_radar.add_trace(go.Scatterpolar(
+                    r=[subj['Pct_Muscle'], subj['Pct_Gras'], subj['Pct_Os'], subj['IC']],
+                    theta=['Muscle %', 'Gras %', 'Os %', 'Conformation'],
+                    fill='toself', name=target, line_color='#2E7D32'
+                ))
+                fig_radar.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 80])), 
+                                        title=f"Signature Morphologique : {target}")
+                st.plotly_chart(fig_radar, use_container_width=True)
+                
+                # JAUGE DE GRAS DORSAL (Style Échographie)
+                fig_gauge = go.Figure(go.Indicator(
+                    mode = "gauge+number",
+                    value = subj['Gras_mm'],
+                    domain = {'x': [0, 1], 'y': [0, 1]},
+                    title = {'text': "Épaisseur de Gras Dorsal (mm)", 'font': {'size': 18}},
+                    gauge = {
+                        'axis': {'range': [None, 25]},
+                        'bar': {'color': "#fb8c00"},
+                        'steps': [
+                            {'range': [0, 5], 'color': "#e8f5e9"},
+                            {'range': [5, 12], 'color': "#fff3e0"},
+                            {'range': [12, 25], 'color': "#ffebee"}],
+                        'threshold': {'line': {'color': "red", 'width': 4}, 'thickness': 0.75, 'value': 18}
+                    }
+                ))
+                st.plotly_chart(fig_gauge, use_container_width=True)
+
+            with col_info:
+                st.markdown("### 📊 Bilan du Rendement")
+                st.markdown(f"""
+                <div class='analysis-box'>
+                    <b>Sujet :</b> {target}<br>
+                    <b>Classe EUROP :</b> {subj['EUROP']}<br><br>
+                    <b>Muscle estimé :</b> {subj['Pct_Muscle']}%<br>
+                    <b>Gras estimé :</b> {subj['Pct_Gras']}%<br>
+                    <b>Os estimé :</b> {subj['Pct_Os']}%<br><hr>
+                    <b>Indice de Valeur (S90) :</b> {subj['S90']}<br>
+                    <i>Note : Un indice S90 > 60 indique un animal à forte plus-value bouchère.</i>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Petit bar chart horizontal pour la distribution
+                dist_data = pd.DataFrame({
+                    'Tissu': ['Muscle', 'Gras', 'Os'],
+                    'Pourcentage': [subj['Pct_Muscle'], subj['Pct_Gras'], subj['Pct_Os']]
+                })
+                fig_bar = px.bar(dist_data, x='Pourcentage', y='Tissu', orientation='h', 
+                                 color='Tissu', color_discrete_map={'Muscle':'#2E7D32', 'Gras':'#FFA000', 'Os':'#BDBDBD'})
+                st.plotly_chart(fig_bar, use_container_width=True)
+        else: st.warning("Données absentes.")
 
     # --- 3. CONTROLE QUALITE (DÉTECTION D'ERREURS) ---
     elif menu == "🔍 Contrôle Qualité":
