@@ -134,31 +134,36 @@ def detecter_anomalies(df, seuil_z=2.5, seuil_ratio=8.0):
                 mask = z_scores > seuil_z
                 df.loc[mask, 'Anomalie'] = True
                 df.loc[mask, 'Severite'] = np.maximum(df.loc[mask, 'Severite'], 2)
-                # Limiter le nombre de décimales pour l'affichage
+                # CORRECTION : Utilisation de .format() au lieu de f-string avec +=
                 for idx in df[mask].index:
                     z_val = z_scores.loc[idx]
-                    df.loc[idx, 'Alerte'] += f"{col} anormal (Z:{z_val:.1f}); "
+                    new_alert = "{} anormal (Z:{:.1f}); ".format(col, z_val)
+                    df.at[idx, 'Alerte'] = df.at[idx, 'Alerte'] + new_alert
     
     # Ratio poids/canon incohérent (physiquement impossible si >8)
     mask_ratio = (df['p70'] / df['c_canon'] > seuil_ratio) & (df['c_canon'] > 0) & (df['p70'] > 0)
     df.loc[mask_ratio, 'Anomalie'] = True
     df.loc[mask_ratio, 'Severite'] = 3
-    df.loc[mask_ratio, 'Alerte'] += "Ratio poids/canon impossible; "
+    df.loc[mask_ratio, 'Alerte'] = df.loc[mask_ratio, 'Alerte'] + "Ratio poids/canon impossible; "
     
     # Gras excessif (>40%)
     if 'Pct_Gras' in df.columns:
         mask_gras = df['Pct_Gras'] > 40
         df.loc[mask_gras, 'Anomalie'] = True
         df.loc[mask_gras, 'Severite'] = np.maximum(df.loc[mask_gras, 'Severite'], 1)
+        # CORRECTION : Utilisation str() pour éviter le problème d'accolade
         for idx in df[mask_gras].index:
-            g_val = df.loc[idx, 'Pct_Gras']
-            df.loc[idx, 'Alerte'] += f"Gras excessif ({g_val:.1f}%}); "
+            g_val = df.at[idx, 'Pct_Gras']
+            gras_str = "Gras excessif (" + str(round(g_val, 1)) + "%); "
+            df.at[idx, 'Alerte'] = df.at[idx, 'Alerte'] + gras_str
     
     # Données manquantes = Warning seulement (pas anomalie critique)
     mask_null_p70 = (df['p70'] == 0) | (df['p70'].isna())
     mask_null_cc = (df['c_canon'] == 0) | (df['c_canon'].isna())
-    df.loc[mask_null_p70, 'Alerte'] += "Poids manquant;"
-    df.loc[mask_null_cc, 'Alerte'] += "Canon manquant;"
+    for idx in df[mask_null_p70].index:
+        df.at[idx, 'Alerte'] = df.at[idx, 'Alerte'] + "Poids manquant;"
+    for idx in df[mask_null_cc].index:
+        df.at[idx, 'Alerte'] = df.at[idx, 'Alerte'] + "Canon manquant;"
     
     return df
 
@@ -433,7 +438,7 @@ def main():
     
     menu = st.sidebar.radio("Menu", [
         "🏠 Dashboard", 
-        "🥩 Composition (Écho-like)", 
+        "🍖 Composition (Écho-like)", 
         "🔍 Contrôle Qualité", 
         "📈 Stats & Analyse",
         "📸 Scanner", 
@@ -563,8 +568,8 @@ def main():
     # ==========================================
     # COMPOSITION (ECHO-LIKE)
     # ==========================================
-    elif menu == "🥩 Composition (Écho-like)":
-        st.title("🥩 Analyse Composition Corporelle")
+    elif menu == "🍖 Composition (Écho-like)":
+        st.title("🍖 Analyse Composition Corporelle")
         
         if df.empty:
             st.info("Pas de données")
