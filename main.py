@@ -531,18 +531,22 @@ def main():
             with col2:
                 st.subheader("📏 Mesures Écho-like")
                 
-                fig_gauge = go.Figure(go.Indicator(
+                                fig_gauge = go.Figure(go.Indicator(
                     mode = "gauge+number",
                     value = animal['Gras_mm'],
                     domain = {'x': [0, 1], 'y': [0, 1]},
                     title = {'text': "Épaisseur Gras (mm)"},
-                    gauge = {'axis': {'range': [None, 25]},
-                            'bar': {'color': "orange"},
-                            'steps': [
-                                {'range': [0, 5], 'color': "lightgreen"},
-                                {'range': [5, 12], 'color': "yellow"},
-                                {'range': [12, 20], 'color': "orange"},
-                                {'range': [20, 25], 'color': "red"}]}}))
+                    gauge = {
+                        'axis': {'range': [None, 25]},
+                        'bar': {'color': "orange"},
+                        'steps': [
+                            {'range': [0, 5], 'color': "lightgreen"},
+                            {'range': [5, 12], 'color': "yellow"},
+                            {'range': [12, 20], 'color': "orange"},
+                            {'range': [20, 25], 'color': "red"}
+                        ]
+                    }
+                ))
                 st.plotly_chart(fig_gauge, use_container_width=True)
                 
                 st.metric("Surface Muscle", f"{animal['SMLD']:.1f} cm²")
