@@ -9,21 +9,16 @@ from contextlib import contextmanager
 import time
 
 # ==========================================
-# 1. DESIGN & CSS (CADRES VISIBLES)
+# 1. DESIGN & CSS (INTERFACE PRO)
 # ==========================================
 st.set_page_config(page_title="Expert Selector Pro", layout="wide", page_icon="🐏")
 
 st.markdown("""
     <style>
     .metric-card {
-        background-color: #ffffff;
-        padding: 20px;
-        border-radius: 12px;
-        border: 1px solid #e0e0e0;
-        border-top: 6px solid #2E7D32;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        text-align: center;
-        margin-bottom: 15px;
+        background-color: #ffffff; padding: 20px; border-radius: 12px;
+        border: 1px solid #e0e0e0; border-top: 6px solid #2E7D32;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center; margin-bottom: 15px;
     }
     .metric-card h2 { color: #2E7D32; font-size: 28px; margin: 5px 0; }
     .metric-card p { color: #555555; font-weight: 600; text-transform: uppercase; font-size: 13px; margin:0; }
@@ -64,7 +59,7 @@ def init_db():
             FOREIGN KEY (id_animal) REFERENCES beliers(id) ON DELETE CASCADE)''')
 
 # ==========================================
-# 3. LOGIQUE MÉTIER & CALCULS
+# 3. MOTEUR DE CALCULS SCIENTIFIQUES
 # ==========================================
 def calculer_composition_carcasse(row):
     try:
@@ -97,13 +92,13 @@ def load_data():
     except: return pd.DataFrame()
 
 # ==========================================
-# 4. INTERFACE UTILISATEUR
+# 4. INTERFACE PRINCIPALE
 # ==========================================
 def main():
     init_db()
     df = load_data()
 
-    # Barre latérale : Recherche + Menu
+    # Barre latérale
     st.sidebar.title("💎 Expert Selector")
     search_query = st.sidebar.text_input("🔍 Recherche par ID", "").strip()
     st.sidebar.markdown("---")
@@ -111,6 +106,7 @@ def main():
 
     df_filtered = df[df['id'].str.contains(search_query, case=False, na=False)] if (search_query and not df.empty) else df
 
+    # --- 1. DASHBOARD ---
     if menu == "🏠 Dashboard":
         st.title("🏆 Tableau de Bord")
         if df.empty: st.info("Bienvenue ! Commencez par l'onglet Saisie.")
@@ -123,10 +119,52 @@ def main():
             
             st.dataframe(df_filtered[['id', 'race', 'p70', 'Pct_Muscle', 'EUROP', 'S90', 'Statut']].sort_values('p70', ascending=False), use_container_width=True)
 
+    # --- 2. COMPOSITION (VÉRITABLE ANALYSE) ---
+    elif menu == "🥩 Composition":
+        st.title("🥩 Analyse de la Carcasse")
+        if not df.empty:
+            animal_id = st.selectbox("Sélectionner l'ID de l'animal", df['id'].unique())
+            subject = df[df['id'] == animal_id].iloc[0]
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                fig_pie = px.pie(names=['Muscle', 'Gras', 'Os'], values=[subject['Pct_Muscle'], subject['Pct_Gras'], subject['Pct_Os']],
+                                 color_discrete_sequence=['#2E7D32', '#FFA000', '#BDBDBD'], hole=0.4, title="Anatomie Estimée")
+                st.plotly_chart(fig_pie, use_container_width=True)
+            with col2:
+                st.markdown(f"<div class='metric-card'><p>Indice de Conformation</p><h2>{subject['IC']}</h2></div>", unsafe_allow_html=True)
+                st.markdown(f"<div class='metric-card'><p>Classe EUROP</p><h2>{subject['EUROP']}</h2></div>", unsafe_allow_html=True)
+        else: st.warning("Aucune donnée disponible.")
+
+    # --- 3. CONTROLE QUALITE (DÉTECTION D'ERREURS) ---
+    elif menu == "🔍 Contrôle Qualité":
+        st.title("🔍 Contrôle de Fiabilité des Mesures")
+        if not df.empty:
+            df['Alerte'] = np.where((df['p70'] < 10) | (df['c_canon'] > 15), "⚠️ Anomalie", "✅ Coordonnées OK")
+            st.table(df[['id', 'p70', 'c_canon', 'h_garrot', 'Alerte']])
+        else: st.info("Saisissez des données pour activer le contrôle.")
+
+    # --- 4. STATS (VISUALISATION GROUPE) ---
+    elif menu == "📈 Stats":
+        st.title("📈 Analyse du Troupeau")
+        if not df.empty:
+            fig_scat = px.scatter(df, x="p70", y="Pct_Muscle", color="EUROP", size="S90", hover_name="id", title="Poids vs Muscle par Classe EUROP")
+            st.plotly_chart(fig_scat, use_container_width=True)
+        else: st.info("Données insuffisantes.")
+
+    # --- 5. SCANNER (SIMULATEUR) ---
+    elif menu == "📸 Scanner":
+        st.title("📸 Scanner Morphologique")
+        img = st.camera_input("Scanner le sujet")
+        if img:
+            st.warning("IA : Analyse morphologique en cours...")
+            st.session_state['scan'] = {'h_garrot': 72.5, 'c_canon': 8.8, 'p_thoracique': 92.0}
+            st.success("✅ Mesures extraites ! Allez dans 'Saisie' pour enregistrer.")
+
+    # --- 6. SAISIE (VOTRE BLOC PERFECTIONNÉ) ---
     elif menu == "✍️ Saisie":
         st.title("✍️ Nouvelle Fiche")
         scan = st.session_state.get('scan', {})
-        
         def estimer_date(dent):
             m_map = {"2 Dents": 15, "4 Dents": 21, "6 Dents": 27, "Pleine bouche": 36}
             return datetime.now() - timedelta(days=m_map.get(dent, 12) * 30)
@@ -142,11 +180,9 @@ def main():
                 if methode == "Date exacte":
                     date_naiss = st.date_input("Naissance", datetime.now() - timedelta(days=100))
                     dentition = st.selectbox("Dentition", ["Agneau", "2 Dents", "4 Dents", "6 Dents"])
-                    flag_est = 0
                 else:
                     dentition = st.selectbox("Dentition actuelle *", ["2 Dents", "4 Dents", "6 Dents", "Pleine bouche"])
                     date_naiss = estimer_date(dentition)
-                    flag_est = 1
                     st.info(f"📅 Estimée : {date_naiss.strftime('%m/%Y')}")
 
             st.subheader("Poids & Mesures")
@@ -165,14 +201,18 @@ def main():
             if not id_animal or p70 <= 0 or cc <= 0: st.error("ID, Poids et Canon obligatoires !")
             else:
                 with get_db_connection() as conn:
-                    conn.execute("INSERT OR REPLACE INTO beliers VALUES (?,?,?,?,?,?,?)", (id_animal, race, "", date_naiss.strftime("%Y-%m-%d"), flag_est, objectif, dentition))
+                    conn.execute("INSERT OR REPLACE INTO beliers VALUES (?,?,?,?,?,?,?)", (id_animal, race, "", date_naiss.strftime("%Y-%m-%d"), 1 if methode != "Date exacte" else 0, objectif, dentition))
                     conn.execute("INSERT INTO mesures (id_animal, p30, p70, h_garrot, c_canon, p_thoracique) VALUES (?,?,?,?,?,?)", (id_animal, p30, p70, hg, cc, pt))
                 st.success("Enregistré !"); time.sleep(1); st.rerun()
 
+    # --- 7. ADMIN ---
     elif menu == "🔧 Admin":
-        if st.button("🗑️ Vider la base"):
-            with get_db_connection() as conn: conn.execute("DELETE FROM mesures"); conn.execute("DELETE FROM beliers")
-            st.rerun()
+        st.title("🔧 Administration")
+        if st.button("🗑️ Vider TOUTES les données"):
+            with get_db_connection() as conn: 
+                conn.execute("DELETE FROM mesures"); conn.execute("DELETE FROM beliers")
+            st.warning("Base de données réinitialisée."); st.rerun()
+        st.download_button("📥 Télécharger CSV", df.to_csv(index=False), "export_ovins.csv", "text/csv")
 
 if __name__ == "__main__":
     main()
