@@ -195,64 +195,68 @@ def main():
             st.plotly_chart(fig_scat, use_container_width=True)
         else: st.info("Données insuffisantes.")
 
-    # --- SCANNER HYBRIDE FLEXIBLE ---
+    # --- SCANNER EXPERT AVEC DIAGNOSTIC ---
     elif menu == "📸 Scanner":
         st.title("📸 Station de Scan Biométrique")
         
-        # 1. Choix de la source
-        source = st.radio("Source de l'image", ["📷 Caméra en direct", "📁 Importer une photo"], horizontal=True)
+        # 1. Configuration
+        col_cfg1, col_cfg2 = st.columns(2)
+        with col_cfg1:
+            source = st.radio("Source de l'image", ["📷 Caméra en direct", "📁 Importer une photo"], horizontal=True)
+        with col_cfg2:
+            mode_scanner = st.radio("Méthode", ["🤖 Automatique (IA)", "📏 Manuel (Gabarit)"], horizontal=True)
         
-        # 2. Choix du mode
-        mode_scanner = st.segmented_control(
-            "Méthode d'analyse",
-            options=["🤖 Automatique (IA)", "📏 Manuel (Gabarit/Bâton)"],
-            default="🤖 Automatique (IA)"
-        )
         st.divider()
 
-        # Capture de l'image selon la source choisie
-        img = None
-        if source == "📷 Caméra en direct":
-            img = st.camera_input("Capturez le profil de l'animal")
-        else:
-            img = st.file_uploader("Choisissez une photo (JPG, PNG)", type=['jpg', 'jpeg', 'png'])
+        # 2. Capture de l'image
+        img = st.camera_input("Capturez le profil") if source == "📷 Caméra en direct" else st.file_uploader("Choisissez une photo", type=['jpg', 'jpeg', 'png'])
 
         if img:
-            col_img, col_data = st.columns([1.2, 1])
+            # On utilise une colonne large pour l'image pour éviter les coupures visuelles
+            col_img, col_res = st.columns([1.5, 1])
             
             with col_img:
-                st.image(img, caption="Image en cours d'analyse", use_container_width=True)
-                if mode_scanner == "📏 Manuel (Gabarit/Bâton)":
-                    st.info("💡 Utilisez un logiciel comme ImageJ pour mesurer les pixels, puis entrez les valeurs ci-contre.")
-
-            with col_data:
+                st.image(img, caption="Analyse de la silhouette", use_container_width=True)
+                
+            with col_res:
                 if mode_scanner == "🤖 Automatique (IA)":
-                    with st.spinner("🧠 Algorithme de vision en cours..."):
-                        time.sleep(1.5) # Simulation du calcul
-                        # Simulation des résultats IA
-                        res = {"h_garrot": 73.5, "c_canon": 8.2, "p_thoracique": 84.0, "l_corps": 82.5}
-                        st.success("✅ Analyse IA terminée")
+                    with st.spinner("🧠 Diagnostic IA..."):
+                        time.sleep(1.2)
+                        
+                        # --- LOGIQUE DE VALIDATION ---
+                        # Ici, on simule une détection : si l'image est incomplète
+                        image_est_complete = False  # Changez à True pour tester le succès
+                        score_confiance = 65 if not image_est_complete else 98
+                        
+                        if not image_est_complete:
+                            st.error(f"⚠️ **QUALITÉ MÉDIOCRE ({score_confiance}%)**")
+                            st.warning("L'animal semble coupé ou trop près. La mesure de longueur est une estimation.")
+                            res = {"h_garrot": 73.5, "c_canon": 8.2, "p_thoracique": 84.0, "l_corps": "Incertain"}
+                        else:
+                            st.success(f"✅ **QUALITÉ EXCELLENTE ({score_confiance}%)**")
+                            res = {"h_garrot": 73.5, "c_canon": 8.2, "p_thoracique": 84.0, "l_corps": 82.5}
                 else:
-                    # Mode Manuel : l'utilisateur entre ses propres mesures de référence
-                    st.subheader("Calibration Manuelle")
-                    ref_val = st.number_input("Référence (ex: Bâton 100cm)", value=100.0)
-                    h_in = st.number_input("Hauteur mesurée (cm)", value=70.0)
-                    c_in = st.number_input("Canon mesuré (cm)", value=8.0)
-                    t_in = st.number_input("Thorax mesuré (cm)", value=82.0)
-                    l_in = st.number_input("Longueur mesurée (cm)", value=80.0)
+                    st.subheader("📏 Calibration Manuelle")
+                    h_in = st.number_input("Hauteur (cm)", value=70.0)
+                    c_in = st.number_input("Canon (cm)", value=8.0)
+                    t_in = st.number_input("Thorax (cm)", value=82.0)
+                    l_in = st.number_input("Longueur (cm)", value=80.0)
                     res = {"h_garrot": h_in, "c_canon": c_in, "p_thoracique": t_in, "l_corps": l_in}
+                    score_confiance = 100 # Manuel = validé par l'humain
 
-                # Affichage des métriques finales
+                # Affichage des métriques avec le score
+                st.divider()
                 st.session_state['scan'] = res
-                m1, m2 = st.columns(2)
-                m1.metric("Hauteur", f"{res['h_garrot']} cm")
-                m1.metric("Canon", f"{res['c_canon']} cm")
-                m2.metric("Thorax", f"{res['p_thoracique']} cm")
-                m2.metric("Longueur", f"{res['l_corps']} cm")
+                
+                c1, c2 = st.columns(2)
+                c1.metric("Hauteur", f"{res['h_garrot']} cm")
+                c1.metric("Canon", f"{res['c_canon']} cm")
+                c2.metric("Thorax", f"{res['p_thoracique']} cm")
+                c2.metric("Longueur", f"{res.get('l_corps', 'N/A')} cm")
 
                 if st.button("🚀 ENVOYER VERS LA SAISIE", type="primary", use_container_width=True):
                     st.session_state['go_saisie'] = True
-                    st.success("Données transférées ! Allez dans l'onglet Saisie.")
+                    st.success("Transféré ! Allez dans l'onglet Saisie.")
     # --- 6. SAISIE (VOTRE BLOC PERFECTIONNÉ) ---
     elif menu == "✍️ Saisie":
         st.title("✍️ Nouvelle Fiche")
