@@ -111,42 +111,92 @@ def main():
                     st.success("✅ Mesures extraites !")
                     st.json(res)
 
-    # --- MODULE COMPOSITION (VOTRE CODE RÉINTÉGRÉ) ---
-    elif menu == "🥩 Composition (Écho-like)":
-        st.title("🥩 Analyse Composition Corporelle")
+    # ==========================================
+    # BLOC À INTÉGRER DANS VOTRE MENU COMPOSITION
+    # ==========================================
+    elif menu == "🥩 Composition":
+        st.title("🥩 Diagnostic Tissulaire (Substitut Échographique)")
+        
         if df.empty:
-            st.info("Veuillez d'abord saisir des données.")
+            st.info("Veuillez d'abord enregistrer un animal dans la section Saisie.")
         else:
-            animal_id = st.selectbox("Sélectionner un animal", df['id'])
-            animal = df[df['id'] == animal_id].iloc[0]
-            
-            col1, col2, col3 = st.columns(3)
+            # 1. Sélection de l'animal
+            target = st.selectbox("Sélectionner l'animal à diagnostiquer", df['id'].unique())
+            subj = df[df['id'] == target].iloc[0]
+
+            # 2. Moteur de calcul (Substitution Écho)
+            # On utilise le périmètre thoracique (PT), la hauteur (HG) et le canon (CC)
+            pt = float(subj.get('p_thoracique', 0))
+            hg = float(subj.get('h_garrot', 0))
+            cc = float(subj.get('c_canon', 0))
+            p70 = float(subj.get('p70', 0))
+
+            # Calculs prédictifs
+            ic = (pt / hg * 100) if hg > 0 else 0
+            gras_mm = max(1.5, (pt * 0.12) + (p70 * 0.05) - (hg * 0.1)) # Simulation épaisseur gras
+            pct_muscle = round(52 + (ic * 0.15) - (cc * 0.4), 1)
+            pct_gras = round((gras_mm * 1.5) + 4, 1)
+            pct_os = round(100 - pct_muscle - pct_gras, 1)
+            rendement = round(42 + (ic * 0.1), 1)
+
+            # 3. Affichage visuel Écho-Like
+            st.divider()
+            col1, col2, col3 = st.columns([1, 1, 1])
+
             with col1:
-                st.subheader("📊 Répartition")
-                labels = ['Muscle', 'Gras', 'Os', 'Autres']
-                values = [animal['pct_muscle'], animal['pct_gras'], animal['pct_os'], 
-                          max(0, 100-(animal['pct_muscle']+animal['pct_gras']+animal['pct_os']))]
-                fig = go.Figure(data=[go.Pie(labels=labels, values=values, hole=.3)])
-                st.plotly_chart(fig, use_container_width=True)
-                st.metric("Classement EUROP", animal['classe_europ'])
+                st.subheader("📟 Sonde Virtuelle")
+                # Jauge d'épaisseur de gras (comme sur un écran d'écho)
+                fig_gras = go.Figure(go.Indicator(
+                    mode="gauge+number", value=gras_mm,
+                    title={'text': "Épaisseur Gras (mm)"},
+                    gauge={'axis': {'range': [0, 20]}, 
+                           'bar': {'color': "#E65100"},
+                           'steps': [{'range': [0, 5], 'color': "#C8E6C9"},
+                                     {'range': [5, 12], 'color': "#FFF9C4"}]}))
+                fig_gras.update_layout(height=250, margin=dict(l=20, r=20, t=50, b=20))
+                st.plotly_chart(fig_gras, use_container_width=True)
+                
+                st.metric("Rendement Estimé", f"{rendement} %")
 
             with col2:
-                st.subheader("📏 Mesures Écho-like")
-                fig_gauge = go.Figure(go.Indicator(
-                    mode="gauge+number", value=animal['gras_mm'],
-                    title={'text': "Épaisseur Gras (mm)"},
-                    gauge={'axis': {'range': [0, 25]}, 'bar': {'color': "orange"},
-                           'steps': [{'range': [0, 5], 'color': "lightgreen"},
-                                     {'range': [5, 12], 'color': "yellow"}]}))
-                st.plotly_chart(fig_gauge, use_container_width=True)
-                st.metric("Surface Muscle", f"{animal['smld']} cm²")
+                st.subheader("🧱 Tissus (Dissection)")
+                # Graphique en secteurs pour la viande
+                fig_pie = px.pie(
+                    values=[pct_muscle, pct_gras, pct_os],
+                    names=['Muscle (Viande)', 'Gras', 'Os'],
+                    color_discrete_sequence=['#2E7D32', '#FFA000', '#757575'],
+                    hole=0.4
+                )
+                fig_pie.update_layout(height=300, margin=dict(l=0, r=0, t=30, b=0))
+                st.plotly_chart(fig_pie, use_container_width=True)
 
             with col3:
-                st.subheader("📈 Références")
-                st.info(f"**Profil {animal['race']}:**\nPoids: {animal['p70']} kg")
-                if animal['pct_gras'] < 15: st.success("Profil maigre")
-                elif animal['pct_gras'] < 25: st.success("Profil optimal")
-                else: st.warning("Profil gras")
+                st.subheader("📋 Expertise")
+                # Calcul du Score de Sélection
+                score_elite = round((pct_muscle * 1.2) + (rendement * 0.8) - (cc * 2), 1)
+                
+                st.markdown(f"""
+                <div style="background-color: #f1f8e9; padding: 15px; border-radius: 10px; border-left: 5px solid #2E7D32;">
+                    <h2 style="margin:0; color: #1B5E20;">{score_elite}/100</h2>
+                    <p style="margin:0; font-weight: bold;">NOTE DE SÉLECTION</p>
+                    <hr>
+                    <b>Morphologie :</b> {'Compacte' if ic > 115 else 'Longiligne'}<br>
+                    <b>Ossature :</b> {'Fine (Idéal)' if cc < 8.5 else 'Lourde'}<br>
+                    <b>Potentiel :</b> {'⭐ ÉLITE' if score_elite > 75 else 'Standard'}
+                </div>
+                """, unsafe_allow_html=True)
+
+            # 4. Comparatif Radar (La structure visuelle que vous aimiez)
+            st.divider()
+            st.subheader("📈 Profil Biométrique Complet")
+            fig_radar = go.Figure()
+            fig_radar.add_trace(go.Scatterpolar(
+                r=[pct_muscle, rendement, ic, p70],
+                theta=['Muscle %', 'Rendement %', 'Compacité', 'Poids'],
+                fill='toself', line_color='#2E7D32'
+            ))
+            fig_radar.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 130])))
+            st.plotly_chart(fig_radar, use_container_width=True)
 
     # --- MODULE COMPARATEUR ---
     elif menu == "⚖️ Comparateur Elite":
