@@ -182,7 +182,128 @@ def update_latest_measurement(conn, animal_id: str):
         logger.error(f"Erreur mise à jour latest_measurements: {e}")
 
 # ==========================================
-# 3. MOTEUR DE CALCULS CARCASSE VECTORISÉ
+# 3. GÉNÉRATION DE DONNÉES DE TEST (50 INDIVIDUS)
+# ==========================================
+def generate_test_data():
+    """Génère 50 individus de test avec distribution réaliste"""
+    races = ['Ouled Djellal', 'Sardi', 'Timahdite', 'Dman', 'Beni Guil', 'Barkia']
+    sexes = ['Bélier'] * 15 + ['Brebis'] * 25 + ['Agneau/elle'] * 10  # 30% Béliers, 50% Brebis, 20% Agneaux
+    statuts_dentaires = ['2 Dents (12-18 mois)', '4 Dents (2 ans)', '6 Dents (2.5 - 3 ans)', '8 Dents / Adulte (4 ans+)']
+    objectifs = ['Reproduction', 'Engraissement', 'Reproduction', 'Engraissement', 'Expérimentation']
+    
+    np.random.seed(42)  # Reproductibilité
+    
+    data_list = []
+    
+    for i in range(1, 51):
+        sexe = np.random.choice(sexes)
+        race = np.random.choice(races)
+        
+        # Génération des mensurations selon le sexe et l'âge
+        if sexe == 'Agneau/elle':
+            # Agneaux plus petits
+            p70 = np.random.normal(25, 5)  # 25kg ±5
+            h_garrot = np.random.normal(55, 3)
+            c_canon = np.random.normal(6.5, 0.5)
+            p_thoracique = np.random.normal(65, 4)
+            l_corps = np.random.normal(55, 3)
+            statut_dent = 'Agneau (Dents de lait)'
+        elif sexe == 'Brebis':
+            # Brebis moyennes
+            p70 = np.random.normal(45, 8)  # 45kg ±8
+            h_garrot = np.random.normal(68, 4)
+            c_canon = np.random.normal(7.8, 0.6)
+            p_thoracique = np.random.normal(82, 5)
+            l_corps = np.random.normal(72, 4)
+            statut_dent = np.random.choice(statuts_dentaires[1:])  # Pas agneau
+        else:
+            # Béliers plus grands, certains très développés (élites)
+            # 20% de chance d'être un "super bélier" (élite)
+            if np.random.random() < 0.2:
+                p70 = np.random.normal(75, 5)  # Très lourd
+                h_garrot = np.random.normal(78, 2)
+                c_canon = np.random.normal(9.5, 0.4)  # Canon épais
+                p_thoracique = np.random.normal(95, 3)  # Thorax large
+                l_corps = np.random.normal(88, 3)
+            else:
+                p70 = np.random.normal(60, 7)
+                h_garrot = np.random.normal(72, 3)
+                c_canon = np.random.normal(8.5, 0.5)
+                p_thoracique = np.random.normal(88, 4)
+                l_corps = np.random.normal(80, 4)
+            statut_dent = np.random.choice(statuts_dentaires[2:])  # Adulte
+        
+        # Poids historiques cohérents
+        p_naiss = max(3.0, p70 * np.random.uniform(0.1, 0.15))
+        p10 = p_naiss + np.random.uniform(3, 6)
+        p30 = p10 + np.random.uniform(8, 15)
+        
+        data = {
+            'id': f'TEST_{i:03d}',
+            'race': race,
+            'sexe': sexe,
+            'statut_dentaire': statut_dent,
+            'objectif': np.random.choice(objectifs),
+            'p_naiss': round(p_naiss, 1),
+            'p_10j': round(p10, 1),
+            'p_30j': round(p30, 1),
+            'p_70j': round(p70, 1),
+            'h_garrot': round(h_garrot, 1),
+            'c_canon': round(c_canon, 1),
+            'p_thoracique': round(p_thoracique, 1),
+            'l_corps': round(l_corps, 1)
+        }
+        data_list.append(data)
+    
+    return data_list
+
+def insert_test_data():
+    """Insère les 50 individus de test dans la base"""
+    try:
+        test_data = generate_test_data()
+        inserted = 0
+        errors = 0
+        
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            for data in test_data:
+                try:
+                    # Insertion bélier
+                    cursor.execute("""
+                        INSERT INTO beliers (id, race, objectif, sexe, statut_dentaire)
+                        VALUES (?, ?, ?, ?, ?)
+                    """, (data['id'], data['race'], data['objectif'], 
+                          data['sexe'], data['statut_dentaire']))
+                    
+                    # Insertion mesures
+                    cursor.execute("""
+                        INSERT INTO mesures 
+                        (id_animal, p_naiss, p10, p30, p70, h_garrot, c_canon, p_thoracique, l_corps)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (data['id'], data['p_naiss'], data['p_10j'],
+                          data['p_30j'], data['p_70j'], data['h_garrot'],
+                          data['c_canon'], data['p_thoracique'], data['l_corps']))
+                    
+                    update_latest_measurement(conn, data['id'])
+                    inserted += 1
+                    
+                except sqlite3.IntegrityError:
+                    errors += 1  # Doublon (normal si déjà inséré)
+                    continue
+                except Exception as e:
+                    logger.error(f"Erreur insertion {data['id']}: {e}")
+                    errors += 1
+            
+            conn.commit()
+        
+        return inserted, errors
+    except Exception as e:
+        logger.error(f"Erreur génération données test: {e}")
+        return 0, 50
+
+# ==========================================
+# 4. MOTEUR DE CALCULS CARCASSE VECTORISÉ
 # ==========================================
 @dataclass
 class CarcassMetrics:
@@ -255,7 +376,7 @@ def calculer_composition_vectorized(df: pd.DataFrame) -> pd.DataFrame:
     df['IC'] = np.round(ic, 1)
     df['Index'] = (df['p70'] * 0.4) + (df['S90'] * 0.6)
     
-    # Statut Elite
+    # Statut Elite (percentile 85)
     if len(df) > 0 and not df['Index'].isna().all():
         threshold = df['Index'].quantile(0.85)
         df['Statut'] = np.where(df['Index'] >= threshold, "⭐ ELITE PRO", "Standard")
@@ -265,7 +386,7 @@ def calculer_composition_vectorized(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 @st.cache_data(ttl=300)
-def load_data() -> pd.DataFrame:
+def load_data() -> pd.DataFrame():
     """Chargement avec gestion dynamique des colonnes"""
     try:
         if not os.path.exists(DB_NAME):
@@ -329,10 +450,10 @@ def save_animal(data: Dict) -> bool:
             
             # Insertion bélier
             cursor.execute("""
-                INSERT INTO beliers (id, race, date_naiss, objectif, sexe, statut_dentaire)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO beliers (id, race, objectif, sexe, statut_dentaire)
+                VALUES (?, ?, ?, ?, ?)
             """, (data['id'], data.get('race', 'Non spécifiée'), 
-                  data.get('date_naiss'), data.get('objectif'), 
+                  data.get('objectif'), 
                   data['sexe'], data.get('statut_dentaire')))
             
             # Insertion mesures
@@ -360,7 +481,7 @@ def save_animal(data: Dict) -> bool:
         return False
 
 # ==========================================
-# 4. INTERFACE PRINCIPALE
+# 5. INTERFACE PRINCIPALE
 # ==========================================
 def init_session_state():
     """Initialisation robuste du session state"""
@@ -380,11 +501,16 @@ def render_metrics(df: pd.DataFrame):
         return
     
     c1, c2, c3, c4 = st.columns(4)
+    
+    n_elite = len(df[df['Statut'] != 'Standard']) if 'Statut' in df.columns else 0
+    muscle_moy = f"{df['Pct_Muscle'].mean():.1f}%" if 'Pct_Muscle' in df.columns and not df['Pct_Muscle'].isna().all() else "N/A"
+    gras_moy = f"{df['Gras_mm'].mean():.1f}mm" if 'Gras_mm' in df.columns and not df['Gras_mm'].isna().all() else "N/A"
+    
     metrics = {
         "Sujets": len(df),
-        "Elite": len(df[df['Statut'] != 'Standard']) if 'Statut' in df.columns else 0,
-        "Muscle Moy.": f"{df['Pct_Muscle'].mean():.1f}%" if 'Pct_Muscle' in df.columns and not df['Pct_Muscle'].isna().all() else "N/A",
-        "Gras Moy.": f"{df['Gras_mm'].mean():.1f}mm" if 'Gras_mm' in df.columns and not df['Gras_mm'].isna().all() else "N/A"
+        "Elite": n_elite,
+        "Muscle Moy.": muscle_moy,
+        "Gras Moy.": gras_moy
     }
     
     cols = [c1, c2, c3, c4]
@@ -449,27 +575,53 @@ def main():
             1. 📸 **Scanner**: Capturez les mensurations
             2. ✍️ **Saisie**: Complétez l'identification  
             3. 🥩 **Composition**: Analysez la qualité carcasse
+            
+            **Ou générez des données de test (50 individus) dans l'onglet Admin pour voir l'application en action !**
             """)
         else:
             render_metrics(df)
             
-            # Graphique
-            try:
-                if 'IC' in df_filtered.columns and 'Index' in df_filtered.columns:
+            # Distribution Elite vs Standard
+            if 'Statut' in df.columns:
+                col_chart1, col_chart2 = st.columns(2)
+                
+                with col_chart1:
+                    # Graphique dispersion IC vs Index
                     fig = px.scatter(df_filtered, x='IC', y='Index', color='Statut', 
                                    size='p70' if 'p70' in df_filtered.columns else None, 
                                    hover_data=['id', 'EUROP'] if 'EUROP' in df_filtered.columns else ['id'],
-                                   title="Matrice de Sélection (IC vs Index Global)")
+                                   color_discrete_map={'⭐ ELITE PRO': '#FFD700', 'Standard': '#2E7D32'},
+                                   title="Matrice de Sélection : IC vs Index Global")
+                    fig.add_hline(y=df['Index'].quantile(0.85), line_dash="dash", 
+                                 annotation_text="Seuil Elite (85e percentile)")
                     st.plotly_chart(fig, use_container_width=True)
-            except Exception as e:
-                st.error(f"Erreur affichage graphique: {e}")
+                
+                with col_chart2:
+                    # Répartition par classes EUROP
+                    if 'EUROP' in df.columns:
+                        europ_counts = df['EUROP'].value_counts()
+                        fig_pie = px.pie(values=europ_counts.values, names=europ_counts.index,
+                                        title="Répartition par Classe EUROP",
+                                        color=europ_counts.index,
+                                        color_discrete_sequence=px.colors.sequential.Greens)
+                        st.plotly_chart(fig_pie, use_container_width=True)
             
-            # Tableau
-            display_cols = ['id', 'race', 'p70', 'Pct_Muscle', 'EUROP', 'Statut', 'IC']
+            # Tableau avec tri
+            display_cols = ['id', 'race', 'sexe', 'p70', 'Pct_Muscle', 'EUROP', 'Statut', 'IC', 'Index']
             available_cols = [col for col in display_cols if col in df_filtered.columns]
+            
+            st.subheader(f"📋 Liste des Individus ({len(df_filtered)} trouvés)")
+            
             if available_cols:
+                # Style conditionnel pour les élites
+                def highlight_elite(row):
+                    if 'Statut' in row and row['Statut'] == '⭐ ELITE PRO':
+                        return ['background-color: #fffacd'] * len(row)
+                    return [''] * len(row)
+                
+                styled_df = df_filtered[available_cols].sort_values('Index', ascending=False) if 'Index' in df_filtered.columns else df_filtered[available_cols]
                 st.dataframe(
-                    df_filtered[available_cols].sort_values('Index', ascending=False) if 'Index' in df_filtered.columns else df_filtered[available_cols],
+                    styled_df.style.apply(highlight_elite, axis=1),
                     use_container_width=True,
                     hide_index=True
                 )
@@ -494,33 +646,44 @@ def main():
                         r=values,
                         theta=['Muscle %', 'Gras %', 'Os %', 'Conformation'],
                         fill='toself',
-                        line_color='#2E7D32',
+                        line_color='#2E7D32' if subj.get('Statut') != '⭐ ELITE PRO' else '#FFD700',
+                        fillcolor='rgba(46, 125, 50, 0.3)' if subj.get('Statut') != '⭐ ELITE PRO' else 'rgba(255, 215, 0, 0.3)',
                         name=subj['id']
                     ))
                     fig_radar.update_layout(
                         polar=dict(radialaxis=dict(visible=True, range=[0, max(values) * 1.2])),
-                        showlegend=False
+                        showlegend=False,
+                        title=f"Profil Carcasse - {'🌟 ELITE' if subj.get('Statut') == '⭐ ELITE PRO' else 'Standard'}"
                     )
                     st.plotly_chart(fig_radar, use_container_width=True)
                 
             with col2:
                 html_content = f"""
-                    <div class='analysis-box'>
-                        <h4>📋 Fiche Technique</h4>
+                    <div class='analysis-box' style='{'border-left-color: #FFD700;' if subj.get('Statut') == '⭐ ELITE PRO' else ''}'>
+                        <h4>{'🌟 ' if subj.get('Statut') == '⭐ ELITE PRO' else ''}📋 Fiche Technique</h4>
                         <b>ID:</b> {target}<br>
-                        <b>Classe EUROP:</b> <span style='font-size:24px'>{subj.get('EUROP', 'N/A')}</span><br>
+                        <b>Sexe:</b> {subj.get('sexe', 'N/A')}<br>
+                        <b>Race:</b> {subj.get('race', 'N/A')}<br>
+                        <b>Classe EUROP:</b> <span style='font-size:24px; color: {'#FFD700' if subj.get('EUROP') in ['S', 'E'] else '#333'}'>{subj.get('EUROP', 'N/A')}</span><br>
+                        <hr style='margin: 10px 0; border: none; border-top: 1px solid #ddd;'>
                         <b>Muscle:</b> {subj.get('Pct_Muscle', 'N/A')}%<br>
                         <b>Gras:</b> {subj.get('Pct_Gras', 'N/A')}%<br>
+                        <b>Os:</b> {subj.get('Pct_Os', 'N/A')}%<br>
+                        <b>Epaisseur Gras:</b> {subj.get('Gras_mm', 'N/A')} mm<br>
                         <b>Indice Conformation:</b> {subj.get('IC', 'N/A')}<br>
-                        <b>Score S90:</b> {subj.get('S90', 'N/A')}
+                        <b>Score S90:</b> {subj.get('S90', 'N/A')}<br>
+                        <b>Index Global:</b> {subj.get('Index', 'N/A'):.2f if isinstance(subj.get('Index'), (int, float)) else 'N/A'}
                     </div>
                 """
                 st.markdown(html_content, unsafe_allow_html=True)
                 
-                if 'Statut' in subj and subj['Statut'] == "⭐ ELITE PRO":
-                    st.success("🏆 Recommandé pour la reproduction")
-                elif 'Pct_Gras' in subj and subj['Pct_Gras'] > 25:
-                    st.warning("⚠️ Surgras - Surveillance alimentaire recommandée")
+                if subj.get('Statut') == "⭐ ELITE PRO":
+                    st.success("🏆 **REPRODUCTEUR ELITE** - Recommandé pour la reproduction")
+                    st.info("💡 Profil optimal: Bonne conformation, faible épaisseur de gras, haute musculature")
+                elif subj.get('Pct_Gras', 0) > 25:
+                    st.warning("⚠️ **Surgras** - Surveillance alimentaire recommandée")
+                elif subj.get('IC', 0) < 25:
+                    st.info("📉 Conformation moyenne - À surveiller")
         else:
             st.warning("Aucune donnée disponible. Veuillez indexer des animaux d'abord.")
 
@@ -687,10 +850,29 @@ def main():
         st.title("🔧 Administration")
         
         col1, col2 = st.columns(2)
+        
         with col1:
-            st.subheader("Maintenance")
-            if st.button("🗑️ Vider la base de données", type="secondary"):
-                confirm = st.checkbox("Je confirme la suppression définitive")
+            st.subheader("🧪 Données de Test")
+            st.info("Générez 50 individus fictifs pour tester l'application et voir la détection des élites.")
+            
+            if st.button("🎲 GÉNÉRER 50 INDIVIDUS DE TEST", type="primary", use_container_width=True):
+                with st.spinner("Génération en cours..."):
+                    inserted, errors = insert_test_data()
+                    if inserted > 0:
+                        st.session_state['data_refresh'] = True
+                        st.success(f"✅ {inserted} individus générés avec succès!")
+                        if errors > 0:
+                            st.info(f"ℹ️ {errors} doublons ignorés (déjà existants)")
+                        st.balloons()
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.warning("Aucun individu inséré (peut-être déjà existants?)")
+        
+        with col2:
+            st.subheader("🗑️ Maintenance")
+            if st.button("Vider la base de données", type="secondary"):
+                confirm = st.checkbox("Je confirme la suppression définitive de TOUTES les données")
                 if confirm:
                     try:
                         with get_db_connection() as conn:
@@ -704,13 +886,22 @@ def main():
                         st.rerun()
                     except Exception as e:
                         st.error(f"Erreur lors de la suppression: {e}")
-        
-        with col2:
-            st.subheader("Statistiques")
+            
+            # Statistiques
             if not df.empty:
+                st.divider()
+                st.subheader("📊 Statistiques")
                 st.metric("Total indexé", len(df))
-                elite_count = len(df[df['Statut'] != 'Standard']) if 'Statut' in df.columns else 0
-                st.metric("Taux d'élite", f"{(elite_count/len(df)*100):.1f}%" if len(df) > 0 else "0%")
+                
+                if 'Statut' in df.columns:
+                    n_elite = len(df[df['Statut'] == '⭐ ELITE PRO'])
+                    st.metric("Nombre d'Élites", n_elite, f"{(n_elite/len(df)*100):.1f}%")
+                
+                if 'EUROP' in df.columns:
+                    st.write("Répartition EUROP:")
+                    europ_stats = df['EUROP'].value_counts()
+                    for cls, count in europ_stats.items():
+                        st.write(f"- Classe {cls}: {count}")
                 
                 # Export CSV
                 csv = df.to_csv(index=False).encode('utf-8')
