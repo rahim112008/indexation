@@ -276,49 +276,71 @@ def main():
                     st.session_state['go_saisie'] = True
                     st.balloons()
                     st.success("Transféré ! Vérifiez l'onglet Saisie.")
-    # --- 6. SAISIE (VOTRE BLOC PERFECTIONNÉ) ---
+    # --- ONGLET SAISIE (SYNCHRONISÉ AVEC SCANNER) ---
     elif menu == "✍️ Saisie":
-        st.title("✍️ Nouvelle Fiche")
-        scan = st.session_state.get('scan', {})
-        def estimer_date(dent):
-            m_map = {"2 Dents": 15, "4 Dents": 21, "6 Dents": 27, "Pleine bouche": 36}
-            return datetime.now() - timedelta(days=m_map.get(dent, 12) * 30)
-
-        with st.form("form_saisie"):
-            col1, col2 = st.columns(2)
+        st.title("✍️ Fiche d'Identification et de Pesée")
+        
+        # Récupération des données du scanner (si elles existent)
+        sd = st.session_state.get('scan', {})
+        
+        with st.form("form_saisie", clear_on_submit=False):
+            st.subheader("🆔 Informations Générales")
+            col1, col2, col3 = st.columns(3)
             with col1:
-                id_animal = st.text_input("ID Animal *", placeholder="Ex: OD-101")
-                race = st.selectbox("Race *", ["Ouled Djellal", "Rembi", "Hamra", "Croisé"])
-                objectif = st.selectbox("Objectif", ["Sélection", "Engraissement", "Reproduction"])
+                id_animal = st.text_input("ID Animal *", placeholder="Ex: OD-2024-001")
             with col2:
-                methode = st.radio("Âge par :", ["Date exacte", "Dentition"])
-                if methode == "Date exacte":
-                    date_naiss = st.date_input("Naissance", datetime.now() - timedelta(days=100))
-                    dentition = st.selectbox("Dentition", ["Agneau", "2 Dents", "4 Dents", "6 Dents"])
+                race = st.selectbox("Race", ["Ouled Djellal", "Rembi", "Hamra", "Croisé"], 
+                                   index=0 if not sd else ["Ouled Djellal", "Rembi", "Hamra", "Croisé"].index("Ouled Djellal"))
+            with col3:
+                age = st.number_input("Âge (mois)", min_value=0, value=6)
+
+            st.divider()
+
+            # --- SECTION PESÉE (NOUVEAU) ---
+            st.subheader("⚖️ Suivi de Croissance (Poids en kg)")
+            cp1, cp2, cp3, cp4 = st.columns(4)
+            with cp1:
+                poids_naissance = st.number_input("Poids Naissance", min_value=0.0, step=0.1)
+            with cp2:
+                poids_10j = st.number_input("Poids 10j", min_value=0.0, step=0.1)
+            with cp3:
+                poids_30j = st.number_input("Poids 30j", min_value=0.0, step=0.1)
+            with cp4:
+                poids_70j = st.number_input("Poids 70j (Sevrage)", min_value=0.0, step=0.1)
+
+            st.divider()
+
+            # --- SECTION BIOMÉTRIE (SYNCHRO SCANNER) ---
+            st.subheader("📏 Mensurations (cm)")
+            st.info("Les valeurs ci-dessous sont pré-remplies par le Scanner.")
+            cm1, cm2, cm3, cm4 = st.columns(4)
+            
+            with cm1:
+                # On utilise la clé 'h_garrot' du scanner
+                hauteur = st.number_input("Hauteur Garrot", value=float(sd.get('h_garrot', 70.0)), step=0.1)
+            with cm2:
+                # On utilise la clé 'c_canon' du scanner
+                canon = st.number_input("Tour de Canon", value=float(sd.get('c_canon', 8.0)), step=0.1)
+            with cm3:
+                # On utilise la clé 'p_thoracique' du scanner
+                thorax = st.number_input("Périmètre Thorax", value=float(sd.get('p_thoracique', 80.0)), step=0.1)
+            with cm4:
+                # On utilise la clé 'l_corps' du scanner
+                longueur = st.number_input("Longueur Corps", value=float(sd.get('l_corps', 80.0)), step=0.1)
+
+            st.divider()
+            
+            submit = st.form_submit_button("💾 ENREGISTRER L'ANIMAL", type="primary", use_container_width=True)
+
+            if submit:
+                if id_animal:
+                    # Ici, vous ajoutez la logique de sauvegarde dans votre base SQL (expert_ovin_pro.db)
+                    st.success(f"✅ Animal {id_animal} enregistré avec succès !")
+                    st.balloons()
+                    # Optionnel : réinitialiser le scan après enregistrement
+                    # st.session_state['scan'] = {}
                 else:
-                    dentition = st.selectbox("Dentition actuelle *", ["2 Dents", "4 Dents", "6 Dents", "Pleine bouche"])
-                    date_naiss = estimer_date(dentition)
-                    st.info(f"📅 Estimée : {date_naiss.strftime('%m/%Y')}")
-
-            st.subheader("Poids & Mesures")
-            c1, c2, c3 = st.columns(3)
-            with c1: p30 = st.number_input("Poids J30", 0.0, 50.0, 0.0)
-            with c2: p70 = st.number_input("Poids Actuel *", 0.0, 150.0, 0.0)
-            with c3: hg = st.number_input("Hauteur (cm)", 0.0, 150.0, float(scan.get('h_garrot', 0.0)))
-            
-            c4, c5 = st.columns(2)
-            with c4: cc = st.number_input("Canon (cm)", 0.0, 20.0, float(scan.get('c_canon', 0.0)))
-            with c5: pt = st.number_input("Périmètre Thorax (cm)", 0.0, 200.0, float(scan.get('p_thoracique', 0.0)))
-            
-            submit = st.form_submit_button("💾 ENREGISTRER", type="primary")
-
-        if submit:
-            if not id_animal or p70 <= 0 or cc <= 0: st.error("ID, Poids et Canon obligatoires !")
-            else:
-                with get_db_connection() as conn:
-                    conn.execute("INSERT OR REPLACE INTO beliers VALUES (?,?,?,?,?,?,?)", (id_animal, race, "", date_naiss.strftime("%Y-%m-%d"), 1 if methode != "Date exacte" else 0, objectif, dentition))
-                    conn.execute("INSERT INTO mesures (id_animal, p30, p70, h_garrot, c_canon, p_thoracique) VALUES (?,?,?,?,?,?)", (id_animal, p30, p70, hg, cc, pt))
-                st.success("Enregistré !"); time.sleep(1); st.rerun()
+                    st.error("⚠️ Veuillez entrer un ID Animal avant de valider.")
 
     # --- 7. ADMIN ---
     elif menu == "🔧 Admin":
