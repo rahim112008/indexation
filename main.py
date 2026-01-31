@@ -276,71 +276,65 @@ def main():
                     st.session_state['go_saisie'] = True
                     st.balloons()
                     st.success("Transféré ! Vérifiez l'onglet Saisie.")
-    # --- ONGLET SAISIE (SYNCHRONISÉ AVEC SCANNER) ---
     elif menu == "✍️ Saisie":
-        st.title("✍️ Fiche d'Identification et de Pesée")
+        st.title("✍️ Indexation et Identification")
         
-        # Récupération des données du scanner (si elles existent)
+        # Récupération des données du scanner
         sd = st.session_state.get('scan', {})
         
-        with st.form("form_saisie", clear_on_submit=False):
-            st.subheader("🆔 Informations Générales")
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                id_animal = st.text_input("ID Animal *", placeholder="Ex: OD-2024-001")
-            with col2:
-                race = st.selectbox("Race", ["Ouled Djellal", "Rembi", "Hamra", "Croisé"], 
-                                   index=0 if not sd else ["Ouled Djellal", "Rembi", "Hamra", "Croisé"].index("Ouled Djellal"))
-            with col3:
-                age = st.number_input("Âge (mois)", min_value=0, value=6)
+        with st.form("form_saisie"):
+            # --- SECTION 1 : IDENTITÉ & ÂGE ---
+            st.subheader("🆔 État Civil de l'Animal")
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                id_animal = st.text_input("N° Boucle / ID *")
+            with c2:
+                # Estimation par la dentition pour les adultes ou inconnus
+                statut_dentaire = st.selectbox("État Dentaire (Âge estimé)", 
+                    ["Agneau (Dents de lait)", "2 Dents (12-18 mois)", "4 Dents (2 ans)", 
+                     "6 Dents (2.5 - 3 ans)", "8 Dents / Adulte (4 ans+)", "Bouche usée / Vieillard"])
+            with c3:
+                sexe = st.radio("Sexe", ["Bélier", "Brebis", "Agneau/elle"], horizontal=True)
 
             st.divider()
 
-            # --- SECTION PESÉE (NOUVEAU) ---
-            st.subheader("⚖️ Suivi de Croissance (Poids en kg)")
+            # --- SECTION 2 : HISTORIQUE DE POIDS (Optionnel) ---
+            st.subheader("⚖️ Historique de Pesée")
+            st.caption("Laissez à 0.0 si l'historique est inconnu (nouvel individu)")
             cp1, cp2, cp3, cp4 = st.columns(4)
             with cp1:
-                poids_naissance = st.number_input("Poids Naissance", min_value=0.0, step=0.1)
+                p_naiss = st.number_input("Poids Naissance", min_value=0.0, value=0.0, step=0.1)
             with cp2:
-                poids_10j = st.number_input("Poids 10j", min_value=0.0, step=0.1)
+                p_10j = st.number_input("Poids à 10j", min_value=0.0, value=0.0, step=0.1)
             with cp3:
-                poids_30j = st.number_input("Poids 30j", min_value=0.0, step=0.1)
+                p_30j = st.number_input("Poids à 30j", min_value=0.0, value=0.0, step=0.1)
             with cp4:
-                poids_70j = st.number_input("Poids 70j (Sevrage)", min_value=0.0, step=0.1)
+                p_70j = st.number_input("Poids actuel / 70j", min_value=0.0, value=0.0, step=0.1)
 
             st.divider()
 
-            # --- SECTION BIOMÉTRIE (SYNCHRO SCANNER) ---
-            st.subheader("📏 Mensurations (cm)")
-            st.info("Les valeurs ci-dessous sont pré-remplies par le Scanner.")
+            # --- SECTION 3 : BIOMÉTRIE (SCANNER) ---
+            st.subheader("📏 Morphologie (Mesures Scanner)")
             cm1, cm2, cm3, cm4 = st.columns(4)
-            
             with cm1:
-                # On utilise la clé 'h_garrot' du scanner
-                hauteur = st.number_input("Hauteur Garrot", value=float(sd.get('h_garrot', 70.0)), step=0.1)
+                hauteur = st.number_input("Hauteur Garrot", value=float(sd.get('h_garrot', 0.0)), step=0.1)
             with cm2:
-                # On utilise la clé 'c_canon' du scanner
-                canon = st.number_input("Tour de Canon", value=float(sd.get('c_canon', 8.0)), step=0.1)
+                # Notre fameux Tour de Canon
+                canon = st.number_input("Tour de Canon", value=float(sd.get('c_canon', 0.0)), step=0.1)
             with cm3:
-                # On utilise la clé 'p_thoracique' du scanner
-                thorax = st.number_input("Périmètre Thorax", value=float(sd.get('p_thoracique', 80.0)), step=0.1)
+                thorax = st.number_input("Périmètre Thorax", value=float(sd.get('p_thoracique', 0.0)), step=0.1)
             with cm4:
-                # On utilise la clé 'l_corps' du scanner
-                longueur = st.number_input("Longueur Corps", value=float(sd.get('l_corps', 80.0)), step=0.1)
+                # Gestion du texte "Coupé" ou "Incertain" venant du scanner
+                val_long = sd.get('l_corps', 0.0)
+                longueur = st.number_input("Longueur Corps", value=float(val_long) if isinstance(val_long, (int, float)) else 0.0, step=0.1)
 
-            st.divider()
+            submit = st.form_submit_button("💾 INDEXER L'INDIVIDU", type="primary", use_container_width=True)
             
-            submit = st.form_submit_button("💾 ENREGISTRER L'ANIMAL", type="primary", use_container_width=True)
-
             if submit:
                 if id_animal:
-                    # Ici, vous ajoutez la logique de sauvegarde dans votre base SQL (expert_ovin_pro.db)
-                    st.success(f"✅ Animal {id_animal} enregistré avec succès !")
-                    st.balloons()
-                    # Optionnel : réinitialiser le scan après enregistrement
-                    # st.session_state['scan'] = {}
+                    st.success(f"✅ L'animal {id_animal} ({statut_dentaire}) a été ajouté à la base de données.")
                 else:
-                    st.error("⚠️ Veuillez entrer un ID Animal avant de valider.")
+                    st.warning("⚠️ L'ID est obligatoire pour l'indexation.")
 
     # --- 7. ADMIN ---
     elif menu == "🔧 Admin":
