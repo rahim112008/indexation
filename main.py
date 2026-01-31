@@ -16,7 +16,7 @@ st.markdown("""
     <style>
     .metric-card {
         background-color: #ffffff; padding: 15px; border-radius: 12px;
-        border: 1px solid #e0e0e0; border-top: 6px solid #2E7D32;
+        border: 1px solid #e0e0e0; border-top: 5px solid #2E7D32;
         box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center;
     }
     .metric-card h2 { color: #2E7D32; margin: 5px 0; font-size: 24px; }
@@ -56,46 +56,55 @@ def init_db():
             FOREIGN KEY (id_animal) REFERENCES beliers(id) ON DELETE CASCADE)''')
 
 # ==========================================
-# 3. LOGIQUE "ECHO-LIKE" & GMD
+# 3. MOTEUR ZOOTECHNIQUE PROFESSIONNEL
 # ==========================================
 def calculer_metrics_finales(row):
+    res = {'Muscle': 0.0, 'Gras': 0.0, 'Os': 0.0, 'IC': 0.0, 'Gras_mm': 0.0, 'GMD': 0, 'ICA': 0.0}
     try:
-        p70 = float(row.get('p70') or 0)
-        p30 = float(row.get('p30') or 0)
+        p_actuel = float(row.get('p70') or 0)
+        p_depart = float(row.get('p30') or 0)
         hg = float(row.get('h_garrot') or 75)
         pt = float(row.get('p_thoracique') or 90)
         cc = float(row.get('c_canon') or 9)
         
-        # --- CALCUL GMD ---
-        gmd = 0
-        if p70 > p30 and p30 > 0:
-            gmd = ((p70 - p30) / 40) * 1000  # g/jour (intervalle 30j-70j)
+        if p_actuel < 5: return pd.Series(res)
 
-        if p70 < 2: return [0]*7
-        
-        # --- LOGIQUE ECHO ---
-        ic = (pt / (cc * hg)) * 1000
-        gras_mm = 1.2 + (p70 * 0.14) + (ic * 0.07) - (hg * 0.04)
-        pct_gras = max(8.0, 5.0 + (gras_mm * 1.6))
-        pct_muscle = max(40.0, 78.0 - (pct_gras * 0.58) + (ic * 0.18))
-        pct_os = round(100 - pct_muscle - pct_gras, 1)
-        
-        return [round(pct_muscle, 1), round(pct_gras, 1), pct_os, round(ic, 1), round(gras_mm, 1), round(gmd, 0), "R"]
-    except: return [0]*7
+        # 1. GMD (Gain Moyen Quotidien)
+        if p_actuel > p_depart and p_depart > 0:
+            res['GMD'] = round(((p_actuel - p_depart) / 40) * 1000)
+
+        # 2. ICA Estimé (Indice de Conversion)
+        # Formule empirique : les animaux à fort GMD et bonne compacité sont plus efficients
+        if res['GMD'] > 0:
+            res['ICA'] = round(3.5 + (1500 / res['GMD']) - (pt/hg * 0.5), 2)
+            res['ICA'] = max(2.8, min(7.5, res['ICA'])) # Bornes réalistes
+
+        # 3. Morphologie & Carcasse
+        ic_calc = (pt / (cc * hg)) * 1000
+        res['IC'] = round(ic_calc, 2)
+        egd = 1.2 + (p_actuel * 0.15) + (ic_calc * 0.05) - (hg * 0.03)
+        res['Gras_mm'] = round(max(0.5, egd), 2)
+        res['Gras'] = round(max(5.0, 4.0 + (res['Gras_mm'] * 1.8)), 1)
+        res['Muscle'] = round(min(75.0, 82.0 - (res['Gras'] * 0.6) + (ic_calc * 0.12)), 1)
+        res['Os'] = round(100 - res['Muscle'] - res['Gras'], 1)
+
+        return pd.Series(res)
+    except: return pd.Series(res)
 
 def load_data():
     with get_db_connection() as conn:
-        df = pd.read_sql("""SELECT b.*, m.p_naiss, m.p10, m.p30, m.p70, m.h_garrot, m.c_canon, m.p_thoracique, m.l_corps 
-                           FROM beliers b LEFT JOIN (SELECT id_animal, MAX(id) as mid FROM mesures GROUP BY id_animal) l ON b.id = l.id_animal 
-                           LEFT JOIN mesures m ON l.mid = m.id""", conn)
+        query = """SELECT b.*, m.p_naiss, m.p10, m.p30, m.p70, m.h_garrot, m.c_canon, m.p_thoracique, m.l_corps 
+                   FROM beliers b LEFT JOIN (SELECT id_animal, MAX(id) as last_id FROM mesures GROUP BY id_animal) last_m ON b.id = last_m.id_animal 
+                   LEFT JOIN mesures m ON last_m.last_id = m.id"""
+        df = pd.read_sql(query, conn)
     if not df.empty:
-        df = df.drop_duplicates(subset=['id'])
-        res = df.apply(lambda x: pd.Series(calculer_metrics_finales(x)), axis=1)
-        df[['Muscle', 'Gras', 'Os', 'IC', 'Gras_mm', 'GMD', 'Classe']] = res
-        # Tri automatique par performance (Muscle et GMD)
-        df = df.sort_values(by=['GMD', 'Muscle'], ascending=False)
-        limit = df['Muscle'].quantile(0.85) if len(df) > 5 else 999
-        df['Statut'] = np.where(df['Muscle'] >= limit, "⭐ ELITE PRO", "Standard")
+        df = df.drop_duplicates(subset=['id']).reset_index(drop=True)
+        metrics_df = df.apply(calculer_metrics_finales, axis=1)
+        df = pd.concat([df, metrics_df], axis=1)
+        df['Score_Expert'] = round((df['Muscle'] * 0.5) + (df['GMD']/10 * 0.5), 1)
+        df = df.sort_values(by='Score_Expert', ascending=False)
+        seuil = df['Score_Expert'].quantile(0.85) if len(df) > 5 else 999
+        df['Statut'] = np.where(df['Score_Expert'] >= seuil, "⭐ ELITE PRO", "Standard")
     return df
 
 # ==========================================
@@ -110,99 +119,77 @@ def main():
 
     # --- DASHBOARD ---
     if menu == "🏠 Dashboard":
-        st.title("🏆 Performance et Suivi du Troupeau")
-        if df.empty: st.info("Base vide. Utilisez l'onglet Admin ou Saisie.")
+        st.title("🏆 Performance Zootechnique")
+        if df.empty: st.info("Base vide.")
         else:
             c1, c2, c3, c4 = st.columns(4)
             c1.markdown(f"<div class='metric-card'><p>Sujets</p><h2>{len(df)}</h2></div>", unsafe_allow_html=True)
             c2.markdown(f"<div class='metric-card'><p>GMD Moyen</p><h2>{df['GMD'].mean():.0f} g/j</h2></div>", unsafe_allow_html=True)
             c3.markdown(f"<div class='metric-card'><p>Muscle Moy.</p><h2>{df['Muscle'].mean():.1f}%</h2></div>", unsafe_allow_html=True)
-            c4.markdown(f"<div class='metric-card'><p>Poids Moy.</p><h2>{df['p70'].mean():.1f} kg</h2></div>", unsafe_allow_html=True)
-            
-            st.subheader("📋 Classement par Performance (GMD & Muscle)")
-            st.dataframe(df[['id', 'sexe', 'dentition', 'p70', 'GMD', 'Muscle', 'Statut']], use_container_width=True)
+            c4.markdown(f"<div class='metric-card'><p>ICA Moyen</p><h2>{df['ICA'].mean():.2f}</h2></div>", unsafe_allow_html=True)
+            st.dataframe(df[['id', 'sexe', 'GMD', 'Muscle', 'ICA', 'Statut']], use_container_width=True)
 
     # --- ECHO-COMPOSITION ---
     elif menu == "🥩 Echo-Composition":
-        st.title("🥩 Analyse Échographique Prédictive")
+        st.title("🥩 Analyse de Carcasse")
         if not df.empty:
-            target = st.selectbox("Choisir un animal", df['id'].unique())
+            target = st.selectbox("Sélectionner", df['id'].unique())
             subj = df[df['id'] == target].iloc[0]
             col1, col2 = st.columns(2)
             with col1:
-                fig = go.Figure(data=[go.Pie(labels=['Muscle', 'Gras', 'Os'], values=[subj['Muscle'], subj['Gras'], subj['Os']], hole=.4, marker_colors=['#2E7D32', '#FBC02D', '#D32F2F'])])
+                fig = go.Figure(data=[go.Pie(labels=['Muscle', 'Gras', 'Os'], values=[subj['Muscle'], subj['Gras'], subj['Os']], hole=.4)])
                 st.plotly_chart(fig, use_container_width=True)
             with col2:
-                st.markdown(f"<div class='analysis-box'><h3>Sujet : {target}</h3><b>Performance GMD :</b> {subj['GMD']} g/jour<br><b>Muscle :</b> {subj['Muscle']}%<br><b>Épaisseur Gras :</b> {subj['Gras_mm']} mm</div>", unsafe_allow_html=True)
-        else: st.warning("Pas de données.")
+                st.markdown(f"<div class='analysis-box'><h3>Sujet : {target}</h3><b>Efficience (ICA) :</b> {subj['ICA']}<br><b>GMD :</b> {subj['GMD']} g/j</div>", unsafe_allow_html=True)
 
-    # --- SCANNER ---
+    # --- SCANNER EXPERT ---
     elif menu == "📸 Scanner":
         st.title("📸 Station de Scan Biométrique")
-        col_cfg1, col_cfg2 = st.columns(2)
-        with col_cfg1: source = st.radio("Source", ["📷 Caméra", "📁 Importer"], horizontal=True)
-        with col_cfg2: mode = st.radio("Mode", ["🤖 IA", "📏 Manuel"], horizontal=True)
-        
-        img = st.camera_input("Profil de l'animal") if source == "📷 Caméra" else st.file_uploader("Photo", type=['jpg','png'])
-
+        c_cfg1, c_cfg2 = st.columns(2)
+        with c_cfg1: source = st.radio("Source", ["📷 Caméra", "📁 Importer"], horizontal=True)
+        with c_cfg2: mode = st.radio("Méthode", ["🤖 Automatique", "📏 Manuel"], horizontal=True)
+        img = st.camera_input("Profil") if source == "📷 Caméra" else st.file_uploader("Image")
         if img:
-            with st.spinner("Analyse..."):
-                time.sleep(1)
-                res = {"h_garrot": 74.5, "c_canon": 8.8, "p_thoracique": 87.0, "l_corps": 85.0}
-                st.session_state['scan'] = res
-                st.success("✅ Scan validé ! Tour de canon : 8.8 cm")
+            res = {"h_garrot": 74.5, "c_canon": 8.8, "p_thoracique": 87.0, "l_corps": 85.0}
+            st.session_state['scan'] = res
+            st.success(f"✅ Cadrage valide ! Tour de canon détecté : {res['c_canon']} cm")
 
     # --- SAISIE MANUELLE ---
     elif menu == "✍️ Saisie":
         st.title("✍️ Indexation et Identification")
         sd = st.session_state.get('scan', {})
-        
         with st.form("form_saisie"):
-            st.subheader("🆔 État Civil")
+            st.subheader("🆔 Identité & Âge")
             c1, c2, c3 = st.columns(3)
             with c1: id_animal = st.text_input("N° Boucle / ID *")
-            with c2: statut_dentaire = st.selectbox("Âge estimé", ["Agneau", "2 Dents", "4 Dents", "6 Dents", "Adulte", "Vieux"])
+            with c2: dentition = st.selectbox("Âge estimé", ["Agneau", "2 Dents", "4 Dents", "Adulte"])
             with c3: sexe = st.radio("Sexe", ["Bélier", "Brebis", "Agneau/elle"], horizontal=True)
-
             st.divider()
-            st.subheader("⚖️ Historique de Poids (Calcul GMD)")
-            cp1, cp2, cp3, cp4 = st.columns(4)
-            with cp1: p_naiss = st.number_input("Poids Naiss.", 0.0)
-            with cp2: p_10j = st.number_input("Poids 10j", 0.0)
-            with cp3: p_30j = st.number_input("Poids 30j", 0.0)
-            with cp4: p_70j = st.number_input("Poids actuel", 0.0)
-
+            st.subheader("⚖️ Pesées")
+            cp1, cp2 = st.columns(2)
+            with cp1: p_30 = st.number_input("Poids 30j (kg)", 0.0)
+            with cp2: p_70 = st.number_input("Poids 70j (kg)", 0.0)
             st.divider()
-            st.subheader("📏 Morphologie (Scanner)")
-            cm1, cm2, cm3, cm4 = st.columns(4)
-            with cm1: hauteur = st.number_input("H. Garrot", value=float(sd.get('h_garrot', 0.0)))
-            with cm2: canon = st.number_input("T. Canon", value=float(sd.get('c_canon', 0.0)))
-            with cm3: thorax = st.number_input("P. Thorax", value=float(sd.get('p_thoracique', 0.0)))
-            with cm4: 
-                v_l = sd.get('l_corps', 0.0)
-                longueur = st.number_input("Long. Corps", value=float(v_l) if isinstance(v_l, (int, float)) else 0.0)
-
+            st.subheader("📏 Morphologie")
+            cm1, cm2, cm3 = st.columns(3)
+            with cm1: h_g = st.number_input("H. Garrot", value=float(sd.get('h_garrot', 0.0)))
+            with cm2: c_c = st.number_input("T. Canon", value=float(sd.get('c_canon', 0.0)))
+            with cm3: p_t = st.number_input("P. Thorax", value=float(sd.get('p_thoracique', 0.0)))
             if st.form_submit_button("💾 INDEXER L'INDIVIDU", type="primary", use_container_width=True):
-                if id_animal:
-                    with get_db_connection() as conn:
-                        conn.execute("INSERT OR REPLACE INTO beliers (id, sexe, dentition, race) VALUES (?,?,?,?)", (id_animal, sexe, statut_dentaire, "O.Djellal"))
-                        conn.execute("INSERT INTO mesures (id_animal, p_naiss, p10, p30, p70, h_garrot, c_canon, p_thoracique, l_corps) VALUES (?,?,?,?,?,?,?,?,?)",
-                                     (id_animal, p_naiss, p_10j, p_30j, p_70j, hauteur, canon, thorax, longueur))
-                    st.success(f"✅ Animal {id_animal} enregistré !")
-                else: st.warning("ID obligatoire.")
+                with get_db_connection() as conn:
+                    conn.execute("INSERT OR REPLACE INTO beliers VALUES (?,?,?,?,?)", (id_animal, "O.Djellal", sexe, dentition, "Performance"))
+                    conn.execute("INSERT INTO mesures (id_animal, p30, p70, h_garrot, c_canon, p_thoracique) VALUES (?,?,?,?,?,?)", (id_animal, p_30, p_70, h_g, c_c, p_t))
+                st.success("Enregistré !")
 
     # --- ADMIN ---
     elif menu == "🔧 Admin":
-        st.title("🔧 Administration")
-        if st.button("🚀 GÉNÉRER 50 INDIVIDUS DE TEST"):
+        if st.button("🚀 GÉNÉRER TEST PROFESSIONNEL"):
             with get_db_connection() as conn:
-                for i in range(50):
+                for i in range(20):
                     id_a = f"DZ-{random.randint(1000, 9999)}"
-                    p30_sim = random.uniform(12, 18)
-                    p70_sim = p30_sim + random.uniform(8, 15)
-                    conn.execute("INSERT OR REPLACE INTO beliers VALUES (?,?,?,?,?)", (id_a, "O.Djellal", "Bélier", "Agneau", "Performance"))
-                    conn.execute("INSERT INTO mesures (id_animal, p30, p70, h_garrot, c_canon, p_thoracique) VALUES (?,?,?,?,?,?)", 
-                                 (id_a, p30_sim, p70_sim, 75, random.uniform(8,10), 95))
+                    p3 = random.uniform(12, 16); p7 = p3 + random.uniform(8, 14)
+                    conn.execute("INSERT OR REPLACE INTO beliers VALUES (?,?,?,?,?)", (id_a, "O.Djellal", "Agneau", "Agneau", "Test"))
+                    conn.execute("INSERT INTO mesures (id_animal, p30, p70, h_garrot, c_canon, p_thoracique) VALUES (?,?,?,?,?,?)", (id_a, p3, p7, 75, 9, 95))
             st.rerun()
 
 if __name__ == "__main__":
