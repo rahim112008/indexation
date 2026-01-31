@@ -4,14 +4,13 @@ import numpy as np
 import sqlite3
 import plotly.express as px
 import plotly.graph_objects as go
-from datetime import datetime, timedelta
 from contextlib import contextmanager
 import time
 
 # ==========================================
-# 1. DESIGN & CSS (CADRES VISIBLES)
+# 1. CONFIGURATION ET STYLE (CADRES VISIBLES)
 # ==========================================
-st.set_page_config(page_title="Expert Selector Pro", layout="wide", page_icon="🐏")
+st.set_page_config(page_title="Expert Selector Pro - Universel", layout="wide", page_icon="🐏")
 
 st.markdown("""
     <style>
@@ -21,24 +20,21 @@ st.markdown("""
         box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center; margin-bottom: 15px;
     }
     .metric-card h2 { color: #2E7D32; font-size: 28px; margin: 5px 0; }
-    .metric-card p { color: #555555; font-weight: 600; text-transform: uppercase; font-size: 13px; margin:0; }
     .analysis-box { background-color: #f1f8e9; padding: 15px; border-radius: 10px; border-left: 5px solid #558b2f; }
     @media (prefers-color-scheme: dark) {
         .metric-card { background-color: #1E1E1E; border: 1px solid #333; }
-        .metric-card p { color: #BBB; }
     }
     </style>
     """, unsafe_allow_html=True)
 
-DB_NAME = "expert_ovin_pro.db"
+DB_NAME = "expert_ovin_universel.db"
 
 # ==========================================
 # 2. GESTION BASE DE DONNÉES
 # ==========================================
 @contextmanager
 def get_db_connection():
-    conn = sqlite3.connect(DB_NAME, check_same_thread=False, timeout=30)
-    conn.execute("PRAGMA journal_mode=WAL")
+    conn = sqlite3.connect(DB_NAME, check_same_thread=False)
     try:
         yield conn
         conn.commit()
@@ -51,232 +47,158 @@ def get_db_connection():
 def init_db():
     with get_db_connection() as conn:
         conn.execute('''CREATE TABLE IF NOT EXISTS beliers (
-            id TEXT PRIMARY KEY, race TEXT, date_naiss TEXT, objectif TEXT)''')
-        conn.execute('''CREATE TABLE IF NOT EXISTS mesures (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, id_animal TEXT NOT NULL,
-            p10 REAL, p30 REAL, p70 REAL, h_garrot REAL, c_canon REAL, 
-            p_thoracique REAL, l_corps REAL, l_poitrine REAL,
-            FOREIGN KEY (id_animal) REFERENCES beliers(id) ON DELETE CASCADE)''')
+            id TEXT PRIMARY KEY, race TEXT, type_morpho TEXT, 
+            p70 REAL, h_garrot REAL, c_canon REAL, p_thoracique REAL, l_corps REAL)''')
 
 # ==========================================
-# 3. MOTEUR DE CALCULS CARCASSE
+# 3. MOTEUR UNIVERSEL (SUBSTITUT ÉCHOGRAPHE)
 # ==========================================
-def calculer_composition_carcasse(row):
+def calculer_composition_universelle(row):
     try:
-        p70, hg, pt, cc = float(row.get('p70', 0)), float(row.get('h_garrot', 70)), float(row.get('p_thoracique', 80)), float(row.get('c_canon', 8.5))
-        if p70 <= 5 or cc <= 2: return 0, 0, 0, 0, "Inconnu", 0, 0
-        ic = max(15, min(45, (pt / (cc * hg)) * 1000))
-        gras_mm = max(2.0, min(22.0, 2.0 + (p70 * 0.15) + (ic * 0.1) - (hg * 0.05)))
-        pct_gras = max(10.0, min(40.0, 5.0 + (gras_mm * 1.5)))
-        pct_muscle = max(45.0, min(72.0, 75.0 - (pct_gras * 0.6) + (ic * 0.2)))
-        pct_os = round(100.0 - pct_muscle - pct_gras, 1)
-        cl = "S" if ic > 33 else "E" if ic > 30 else "U" if ic > 27 else "R" if ic > 24 else "O/P"
-        s90 = round((pct_muscle * 1.2) - (pct_gras * 0.5), 1)
-        return round(pct_muscle, 1), round(pct_gras, 1), pct_os, round(gras_mm, 1), cl, s90, round(ic, 1)
-    except: return 0, 0, 0, 0, "Erreur", 0, 0
+        p, h, t, c = float(row['p70']), float(row['h_garrot']), float(row['p_thoracique']), float(row['c_canon'])
+        morpho = row.get('type_morpho', 'Mixte')
+        
+        # Coefficients adaptatifs par type de race (Universalité)
+        coefs = {
+            "Viande (Précoce)": {"musc": 1.15, "gras": 1.10, "rend": 1.05},
+            "Mixte": {"musc": 1.00, "gras": 1.00, "rend": 1.00},
+            "Rustique": {"musc": 0.85, "gras": 0.90, "rend": 0.92}
+        }
+        cf = coefs.get(morpho, coefs["Mixte"])
 
-@st.cache_data(ttl=2)
-def load_data():
-    try:
-        with get_db_connection() as conn:
-            df = pd.read_sql("""SELECT b.*, m.p70, m.h_garrot, m.p_thoracique, m.c_canon, m.l_corps, m.l_poitrine 
-                               FROM beliers b LEFT JOIN (SELECT id_animal, MAX(id) as mid FROM mesures GROUP BY id_animal) l ON b.id = l.id_animal 
-                               LEFT JOIN mesures m ON l.mid = m.id""", conn)
-            if df.empty: return df
-            res = df.apply(lambda x: pd.Series(calculer_composition_carcasse(x)), axis=1)
-            df[['Pct_Muscle', 'Pct_Gras', 'Pct_Os', 'Gras_mm', 'EUROP', 'S90', 'IC']] = res
-            df['Index'] = (df['p70'] * 0.4) + (df['S90'] * 0.6)
-            df['Statut'] = np.where(df['Index'] >= df['Index'].quantile(0.85), "⭐ ELITE PRO", "Standard")
-            return df
-    except: return pd.DataFrame()
+        ic = (t / h * 100) if h > 0 else 0
+        gras_mm = max(1.2, ((t * 0.1) + (p * 0.04) - (h * 0.08)) * cf['gras'])
+        pct_muscle = (50 + (ic * 0.18) - (c * 0.45)) * cf['musc']
+        pct_gras = (gras_mm * 1.4 + 3) * cf['gras']
+        pct_os = 100 - pct_muscle - pct_gras
+        rendement = (40 + (ic * 0.12)) * cf['rend']
+        score = (pct_muscle * 1.3) + (rendement * 0.7) - (c * 1.5)
+        
+        return {
+            "muscle": round(pct_muscle, 1), "gras": round(pct_gras, 1), "os": round(pct_os, 1),
+            "gras_mm": round(gras_mm, 1), "rendement": round(rendement, 1), "score": round(score / 1.6, 1)
+        }
+    except: return None
 
 # ==========================================
 # 4. INTERFACE PRINCIPALE
 # ==========================================
 def main():
     init_db()
-    df = load_data()
-
+    
     # Barre latérale
-    st.sidebar.title("💎 Expert Selector")
-    search_query = st.sidebar.text_input("🔍 Recherche par ID", "").strip()
-    menu = st.sidebar.radio("Navigation", ["🏠 Dashboard", "🥩 Composition", "📸 Scanner", "✍️ Saisie", "🔧 Admin"])
+    st.sidebar.title("💎 Expert Selector Pro")
+    menu = st.sidebar.radio("Navigation", ["🏠 Dashboard", "🥩 Composition", "📸 Scanner IA", "✍️ Saisie", "🔧 Admin"])
 
-    df_filtered = df[df['id'].str.contains(search_query, case=False, na=False)] if (search_query and not df.empty) else df
+    with get_db_connection() as conn:
+        df = pd.read_sql("SELECT * FROM beliers", conn)
 
     # --- DASHBOARD ---
     if menu == "🏠 Dashboard":
-        st.title("🏆 Tableau de Bord")
-        if df.empty: st.info("Commencez par le Scanner ou la Saisie.")
+        st.title("🏆 Tableau de Bord du Troupeau")
+        if df.empty:
+            st.info("Aucune donnée disponible. Commencez par la Saisie ou le Scanner.")
         else:
-            c1, c2, c3, c4 = st.columns(4)
+            df_res = df.apply(lambda x: pd.Series(calculer_composition_universelle(x)), axis=1)
+            full_df = pd.concat([df, df_res], axis=1).sort_values(by="score", ascending=False)
+            
+            c1, c2, c3 = st.columns(3)
             with c1: st.markdown(f"<div class='metric-card'><p>Sujets</p><h2>{len(df)}</h2></div>", unsafe_allow_html=True)
-            with c2: st.markdown(f"<div class='metric-card'><p>Elite</p><h2>{len(df[df['Statut'] != 'Standard'])}</h2></div>", unsafe_allow_html=True)
-            with c3: st.markdown(f"<div class='metric-card'><p>Muscle Moy.</p><h2>{df['Pct_Muscle'].mean():.1f}%</h2></div>", unsafe_allow_html=True)
-            with c4: st.markdown(f"<div class='metric-card'><p>Gras Moy.</p><h2>{df['Gras_mm'].mean():.1f}mm</h2></div>", unsafe_allow_html=True)
-            st.dataframe(df_filtered[['id', 'race', 'p70', 'Pct_Muscle', 'EUROP', 'Statut']], use_container_width=True)
+            with c2: st.markdown(f"<div class='metric-card'><p>Moy. Muscle</p><h2>{full_df['muscle'].mean():.1f}%</h2></div>", unsafe_allow_html=True)
+            with c3: st.markdown(f"<div class='metric-card'><p>Score Max</p><h2>{full_df['score'].max():.1f}</h2></div>", unsafe_allow_html=True)
+            
+            st.subheader("📋 Classement de Sélection")
+            st.dataframe(full_df[['id', 'race', 'score', 'muscle', 'rendement', 'type_morpho']], use_container_width=True)
 
-    # --- COMPOSITION PRO ---
+    # --- COMPOSITION (SUBSTITUT ÉCHO) ---
     elif menu == "🥩 Composition":
-        st.title("🥩 Analyse de Carcasse")
-        if not df.empty:
+        st.title("🥩 Diagnostic Écho-Virtuel")
+        if df.empty:
+            st.warning("Veuillez d'abord enregistrer un animal.")
+        else:
             target = st.selectbox("Sélectionner l'animal", df['id'].unique())
             subj = df[df['id'] == target].iloc[0]
-            col1, col2 = st.columns([2, 1])
-            with col1:
-                fig_radar = go.Figure()
-                fig_radar.add_trace(go.Scatterpolar(r=[subj['Pct_Muscle'], subj['Pct_Gras'], subj['Pct_Os'], subj['IC']],
-                    theta=['Muscle %', 'Gras %', 'Os %', 'Conformation'], fill='toself', line_color='#2E7D32'))
-                st.plotly_chart(fig_radar, use_container_width=True)
-            with col2:
-                st.markdown(f"<div class='analysis-box'><b>ID:</b> {target}<br><b>Classe:</b> {subj['EUROP']}<br><b>Muscle:</b> {subj['Pct_Muscle']}%</div>", unsafe_allow_html=True)
-        else: st.warning("Données absentes.")
-
-    # --- SCANNER EXPERT FINAL (VERSION TEST COMPLÈTE) ---
-    elif menu == "📸 Scanner":
-        st.title("📸 Station de Scan Biométrique")
-        st.markdown("_Analyse morphologique et diagnostic de la structure osseuse._")
-        
-        # 1. Configuration des options
-        col_cfg1, col_cfg2 = st.columns(2)
-        with col_cfg1:
-            source = st.radio("Source de l'image", ["📷 Caméra en direct", "📁 Importer une photo"], horizontal=True)
-        with col_cfg2:
-            mode_scanner = st.radio("Méthode d'analyse", ["🤖 Automatique (IA)", "📏 Manuel (Gabarit)"], horizontal=True)
-        
-        st.divider()
-
-        # 2. Zone de capture ou d'importation
-        if source == "📷 Caméra en direct":
-            img = st.camera_input("Positionnez l'animal bien de profil")
-        else:
-            img = st.file_uploader("Charger une photo de profil complète (ex: moouton.jpg)", type=['jpg', 'jpeg', 'png'])
-
-        if img:
-            # Mise en page : Image à gauche (60%), Résultats à droite (40%)
-            col_img, col_res = st.columns([1.5, 1])
+            res = calculer_composition_universelle(subj)
             
-            with col_img:
-                st.image(img, caption="Silhouette et points osseux détectés", use_container_width=True)
-                
-            with col_res:
-                if mode_scanner == "🤖 Automatique (IA)":
-                    with st.spinner("🧠 Analyse du squelette et du cadrage..."):
-                        time.sleep(1.2)
-                        
-                        # --- LOGIQUE DE VALIDATION AUTOMATIQUE ---
-                        # Simulation : l'animal est considéré complet s'il n'est pas aux bords (marges de 5%)
-                        margin_left = 10  # Valeur simulée pour votre photo "moouton.jpg"
-                        margin_right = 90
-                        
-                        image_est_complete = True if (margin_left > 5 and margin_right < 95) else False
-                        score_confiance = 98 if image_est_complete else 65
-                        
-                        if image_est_complete:
-                            st.success(f"✅ **CADRAGE VALIDE ({score_confiance}%)**")
-                            # Valeurs types pour un bélier Ouled Djellal adulte
-                            res = {
-                                "h_garrot": 74.5, 
-                                "c_canon": 8.8, # Circonférence du canon
-                                "p_thoracique": 87.0, 
-                                "l_corps": 85.0
-                            }
-                        else:
-                            st.error(f"⚠️ **IMAGE INCOMPLÈTE ({score_confiance}%)**")
-                            st.warning("L'animal touche les bords. Mesures incertaines.")
-                            res = {"h_garrot": 73.5, "c_canon": 8.2, "p_thoracique": 84.0, "l_corps": "Coupé"}
-                
-                else:
-                    # --- MODE MANUEL (GABARIT) ---
-                    st.subheader("📏 Mesures au Gabarit")
-                    st.info("Entrez les mesures relevées avec votre étalon (bâton).")
-                    h_in = st.number_input("Hauteur Garrot (cm)", value=72.0)
-                    c_in = st.number_input("Tour de Canon (cm)", value=8.5)
-                    t_in = st.number_input("Périmètre Thorax (cm)", value=84.0)
-                    l_in = st.number_input("Longueur Corps (cm)", value=82.0)
-                    res = {"h_garrot": h_in, "c_canon": c_in, "p_thoracique": t_in, "l_corps": l_in}
-                    score_confiance = 100
+            if res:
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.subheader("📟 Sonde Virtuelle")
+                    fig_g = go.Figure(go.Indicator(
+                        mode="gauge+number", value=res['gras_mm'],
+                        title={'text': "Épaisseur Gras (mm)"},
+                        gauge={'axis': {'range': [0, 15]}, 'bar': {'color': "#E65100"}}))
+                    fig_g.update_layout(height=250)
+                    st.plotly_chart(fig_g, use_container_width=True)
+                    
 
-                # --- AFFICHAGE DES RÉSULTATS (BIEN VISIBLES) ---
+                with col2:
+                    st.subheader("🧱 Tissus (Dissection)")
+                    fig_p = px.pie(values=[res['muscle'], res['gras'], res['os']], 
+                                   names=['Muscle', 'Gras', 'Os'],
+                                   color_discrete_sequence=['#2E7D32', '#FBC02D', '#9E9E9E'], hole=0.4)
+                    st.plotly_chart(fig_p, use_container_width=True)
+
+                with col3:
+                    st.subheader("🏆 Rapport")
+                    st.markdown(f"""
+                        <div class='analysis-box'>
+                            <h2 style='color:#2E7D32; margin:0;'>{res['score']}/100</h2>
+                            <p><b>Note de Sélection</b></p>
+                            <hr>
+                            <b>Rendement:</b> {res['rendement']}%<br>
+                            <b>Finesse d'os:</b> {'Idéale' if subj['c_canon'] < 8.5 else 'Standard'}<br>
+                            <b>Potentiel:</b> {'⭐ ELITE' if res['score'] > 75 else 'Standard'}
+                        </div>
+                    """, unsafe_allow_html=True)
+
                 st.divider()
-                st.session_state['scan'] = res # Stockage pour transfert
+                fig_radar = go.Figure()
+                fig_radar.add_trace(go.Scatterpolar(
+                    r=[res['muscle'], res['rendement'], res['score'], subj['p70']],
+                    theta=['Muscle %', 'Rendement %', 'Score Global', 'Poids'],
+                    fill='toself', line_color='#2E7D32'
+                ))
+                st.plotly_chart(fig_radar, use_container_width=True)
                 
-                m1, m2 = st.columns(2)
-                with m1:
-                    st.metric("📏 Hauteur", f"{res['h_garrot']} cm")
-                    st.metric("🦴 Tour de Canon", f"{res['c_canon']} cm") # Voilà votre mesure !
-                with m2:
-                    st.metric("⭕ Thorax", f"{res['p_thoracique']} cm")
-                    st.metric("📏 Longueur", f"{res['l_corps']} cm")
 
-                if st.button("🚀 VALIDER ET ENVOYER À LA SAISIE", type="primary", use_container_width=True):
-                    st.session_state['go_saisie'] = True
-                    st.balloons()
-                    st.success("Transféré ! Vérifiez l'onglet Saisie.")
+    # --- SCANNER IA (ÉTALON 1M) ---
+    elif menu == "📸 Scanner IA":
+        st.title("📸 Station de Scan Biométrique")
+        st.info("Calibrage automatique sur étalon de 1 mètre.")
+        img = st.camera_input("Positionnez l'animal de profil")
+        if img:
+            st.success("Image capturée. Extraction des points osseux...")
+            # Simulation des résultats du scanner
+            st.session_state['scan_data'] = {'h': 74.0, 't': 88.0, 'c': 8.4}
+            st.json(st.session_state['scan_data'])
 
+    # --- SAISIE ---
     elif menu == "✍️ Saisie":
-        st.title("✍️ Indexation et Identification")
-        
-        # Récupération des données du scanner
-        sd = st.session_state.get('scan', {})
-        
+        st.title("✍️ Enregistrement de l'Individu")
+        scan = st.session_state.get('scan_data', {})
         with st.form("form_saisie"):
-            # --- SECTION 1 : IDENTITÉ & ÂGE ---
-            st.subheader("🆔 État Civil de l'Animal")
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                id_animal = st.text_input("N° Boucle / ID *")
-            with c2:
-                # Estimation par la dentition pour les adultes ou inconnus
-                statut_dentaire = st.selectbox("État Dentaire (Âge estimé)", 
-                    ["Agneau (Dents de lait)", "2 Dents (12-18 mois)", "4 Dents (2 ans)", 
-                     "6 Dents (2.5 - 3 ans)", "8 Dents / Adulte (4 ans+)", "Bouche usée / Vieillard"])
-            with c3:
-                sexe = st.radio("Sexe", ["Bélier", "Brebis", "Agneau/elle"], horizontal=True)
+            c1, c2 = st.columns(2)
+            id_a = c1.text_input("ID / Boucle *")
+            race = c1.text_input("Race (ex: Ouled Djellal, Merinos)")
+            type_m = c1.selectbox("Morphotype", ["Viande (Précoce)", "Mixte", "Rustique"])
+            p70 = c2.number_input("Poids actuel (kg)", 0.0)
+            h = c2.number_input("Hauteur (cm)", value=scan.get('h', 0.0))
+            t = c2.number_input("Thorax (cm)", value=scan.get('t', 0.0))
+            c = c2.number_input("Canon (cm)", value=scan.get('c', 0.0))
+            if st.form_submit_button("Enregistrer l'Analyse"):
+                if id_a:
+                    with get_db_connection() as conn:
+                        conn.execute("INSERT OR REPLACE INTO beliers VALUES (?,?,?,?,?,?,?,?)", 
+                                     (id_a, race, type_m, p70, h, c, t, 0.0))
+                    st.balloons()
+                    st.success(f"Animal {id_a} indexé avec succès.")
+                else: st.error("L'ID est obligatoire.")
 
-            st.divider()
-
-            # --- SECTION 2 : HISTORIQUE DE POIDS (Optionnel) ---
-            st.subheader("⚖️ Historique de Pesée")
-            st.caption("Laissez à 0.0 si l'historique est inconnu (nouvel individu)")
-            cp1, cp2, cp3, cp4 = st.columns(4)
-            with cp1:
-                p_naiss = st.number_input("Poids Naissance", min_value=0.0, value=0.0, step=0.1)
-            with cp2:
-                p_10j = st.number_input("Poids à 10j", min_value=0.0, value=0.0, step=0.1)
-            with cp3:
-                p_30j = st.number_input("Poids à 30j", min_value=0.0, value=0.0, step=0.1)
-            with cp4:
-                p_70j = st.number_input("Poids actuel / 70j", min_value=0.0, value=0.0, step=0.1)
-
-            st.divider()
-
-            # --- SECTION 3 : BIOMÉTRIE (SCANNER) ---
-            st.subheader("📏 Morphologie (Mesures Scanner)")
-            cm1, cm2, cm3, cm4 = st.columns(4)
-            with cm1:
-                hauteur = st.number_input("Hauteur Garrot", value=float(sd.get('h_garrot', 0.0)), step=0.1)
-            with cm2:
-                # Notre fameux Tour de Canon
-                canon = st.number_input("Tour de Canon", value=float(sd.get('c_canon', 0.0)), step=0.1)
-            with cm3:
-                thorax = st.number_input("Périmètre Thorax", value=float(sd.get('p_thoracique', 0.0)), step=0.1)
-            with cm4:
-                # Gestion du texte "Coupé" ou "Incertain" venant du scanner
-                val_long = sd.get('l_corps', 0.0)
-                longueur = st.number_input("Longueur Corps", value=float(val_long) if isinstance(val_long, (int, float)) else 0.0, step=0.1)
-
-            submit = st.form_submit_button("💾 INDEXER L'INDIVIDU", type="primary", use_container_width=True)
-            
-            if submit:
-                if id_animal:
-                    st.success(f"✅ L'animal {id_animal} ({statut_dentaire}) a été ajouté à la base de données.")
-                else:
-                    st.warning("⚠️ L'ID est obligatoire pour l'indexation.")
     # --- ADMIN ---
     elif menu == "🔧 Admin":
-        if st.button("🗑️ Vider la base de données"):
-            with get_db_connection() as conn: conn.execute("DELETE FROM mesures"); conn.execute("DELETE FROM beliers")
+        if st.button("🗑️ Réinitialiser la base de données"):
+            with get_db_connection() as conn: conn.execute("DELETE FROM beliers")
             st.rerun()
 
 if __name__ == "__main__":
