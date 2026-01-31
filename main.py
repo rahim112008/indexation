@@ -44,20 +44,17 @@ st.markdown("""
 DB_NAME = "expert_ovin_pro.db"
 
 # ==========================================
-# 2. GESTION BASE DE DONNÉES CORRIGÉE
+# 2. GESTION BASE DE DONNÉES CORRIGÉE AVEC MIGRATION
 # ==========================================
 @contextmanager
 def get_db_connection():
     """
-    Gestionnaire de connexion robuste sans isolation_level=None
-    pour permettre le contrôle explicite des transactions
+    Gestionnaire de connexion robuste
     """
     conn = None
     try:
         conn = sqlite3.connect(DB_NAME, check_same_thread=False, timeout=30.0)
-        # Activation des clés étrangères
         conn.execute("PRAGMA foreign_keys = ON")
-        # Mode WAL pour meilleure concurrence
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
         conn.execute("PRAGMA cache_size=10000")
@@ -71,13 +68,57 @@ def get_db_connection():
         if conn:
             conn.close()
 
-def init_db():
-    """Initialisation robuste avec vérification d'erreurs"""
+def check_and_migrate_db():
+    """Vérifie et met à jour la structure de la base si nécessaire"""
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
             
-            # Table béliers avec contraintes
+            # Vérifier les colonnes existantes dans mesures
+            cursor.execute("PRAGMA table_info(mesures)")
+            existing_cols = {row[1] for row in cursor.fetchall()}
+            
+            # Colonnes à ajouter si manquantes
+            columns_to_add = {
+                'p_naiss': 'REAL DEFAULT 0.0',
+                'p10': 'REAL DEFAULT 0.0',
+                'p30': 'REAL DEFAULT 0.0'
+            }
+            
+            for col_name, col_type in columns_to_add.items():
+                if col_name not in existing_cols:
+                    try:
+                        cursor.execute(f"ALTER TABLE mesures ADD COLUMN {col_name} {col_type}")
+                        logger.info(f"Colonne {col_name} ajoutée à la table mesures")
+                    except sqlite3.OperationalError as e:
+                        logger.warning(f"Impossible d'ajouter {col_name}: {e}")
+            
+            # Vérifier si la table latest_measurements existe
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='latest_measurements'")
+            if not cursor.fetchone():
+                cursor.execute('''
+                    CREATE TABLE latest_measurements (
+                        id_animal TEXT PRIMARY KEY,
+                        last_mesure_id INTEGER,
+                        FOREIGN KEY (id_animal) REFERENCES beliers(id) ON DELETE CASCADE,
+                        FOREIGN KEY (last_mesure_id) REFERENCES mesures(id) ON DELETE CASCADE
+                    )
+                ''')
+                logger.info("Table latest_measurements créée")
+            
+            conn.commit()
+            
+    except Exception as e:
+        logger.error(f"Erreur migration: {e}")
+        raise
+
+def init_db():
+    """Initialisation robuste avec migration automatique"""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Table béliers
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS beliers (
                     id TEXT PRIMARY KEY, 
@@ -90,7 +131,7 @@ def init_db():
                 )
             ''')
             
-            # Table mesures avec index
+            # Table mesures (création initiale avec toutes les colonnes)
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS mesures (
                     id INTEGER PRIMARY KEY AUTOINCREMENT, 
@@ -114,18 +155,11 @@ def init_db():
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_mesures_date ON mesures(date_mesure)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_beliers_race ON beliers(race)')
             
-            # Table pour les dernières mesures (approche simplifiée sans trigger complexe)
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS latest_measurements (
-                    id_animal TEXT PRIMARY KEY,
-                    last_mesure_id INTEGER,
-                    FOREIGN KEY (id_animal) REFERENCES beliers(id) ON DELETE CASCADE,
-                    FOREIGN KEY (last_mesure_id) REFERENCES mesures(id) ON DELETE CASCADE
-                )
-            ''')
-            
             conn.commit()
-            logger.info("Base de données initialisée avec succès")
+        
+        # Migration si la base existait déjà avec ancien schéma
+        check_and_migrate_db()
+        logger.info("Base de données initialisée avec succès")
             
     except Exception as e:
         logger.error(f"Erreur initialisation DB: {e}")
@@ -133,7 +167,7 @@ def init_db():
         raise
 
 def update_latest_measurement(conn, animal_id: str):
-    """Met à jour la dernière mesure pour un animal (remplace le trigger)"""
+    """Met à jour la dernière mesure pour un animal"""
     try:
         cursor = conn.cursor()
         cursor.execute('DELETE FROM latest_measurements WHERE id_animal = ?', (animal_id,))
@@ -164,12 +198,11 @@ class CarcassMetrics:
 
 def calculer_composition_vectorized(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Version vectorisée des calculs carcasse (x100 plus rapide que apply)
+    Version vectorisée des calculs carcasse
     """
     if df.empty:
         return df
     
-    # Copie pour éviter SettingWithCopyWarning
     df = df.copy()
     
     # Conversion en numérique avec gestion d'erreurs
@@ -180,10 +213,10 @@ def calculer_composition_vectorized(df: pd.DataFrame) -> pd.DataFrame:
         else:
             df[col] = 0.0
     
-    # Filtrage des valeurs invalides (vectorisé)
+    # Filtrage des valeurs invalides
     mask_valid = (df['p70'] > 5) & (df['c_canon'] > 2) & (df['h_garrot'] > 0)
     
-    # Calcul de l'indice de conformation (IC) - vectorisé
+    # Calcul de l'indice de conformation (IC)
     ic = np.where(
         mask_valid,
         np.clip((df['p_thoracique'] / (df['c_canon'] * df['h_garrot'])) * 1000, 15, 45),
@@ -202,12 +235,9 @@ def calculer_composition_vectorized(df: pd.DataFrame) -> pd.DataFrame:
     pct_muscle = np.clip(75.0 - (pct_gras * 0.6) + (ic * 0.2), 45.0, 72.0)
     pct_os = 100.0 - pct_muscle - pct_gras
     
-    # Classification EUROP vectorisée
+    # Classification EUROP
     conditions = [
-        ic > 33,  # S
-        ic > 30,  # E
-        ic > 27,  # U
-        ic > 24   # R
+        ic > 33, ic > 30, ic > 27, ic > 24
     ]
     choices = ['S', 'E', 'U', 'R']
     europ = np.select(conditions, choices, default='O/P')
@@ -225,7 +255,7 @@ def calculer_composition_vectorized(df: pd.DataFrame) -> pd.DataFrame:
     df['IC'] = np.round(ic, 1)
     df['Index'] = (df['p70'] * 0.4) + (df['S90'] * 0.6)
     
-    # Calcul du statut Elite (percentile 85)
+    # Statut Elite
     if len(df) > 0 and not df['Index'].isna().all():
         threshold = df['Index'].quantile(0.85)
         df['Statut'] = np.where(df['Index'] >= threshold, "⭐ ELITE PRO", "Standard")
@@ -236,24 +266,44 @@ def calculer_composition_vectorized(df: pd.DataFrame) -> pd.DataFrame:
 
 @st.cache_data(ttl=300)
 def load_data() -> pd.DataFrame:
-    """Chargement optimisé avec gestion d'erreurs améliorée"""
+    """Chargement avec gestion dynamique des colonnes"""
     try:
-        # Vérification existence fichier
         if not os.path.exists(DB_NAME):
             logger.warning(f"Base {DB_NAME} non trouvée, initialisation...")
             init_db()
             return pd.DataFrame()
         
         with get_db_connection() as conn:
-            # Requête optimisée
-            query = """
-                SELECT b.*, m.p70, m.h_garrot, m.p_thoracique, 
-                       m.c_canon, m.l_corps, m.l_poitrine, m.p_naiss, m.p10, m.p30
+            # Vérifier les colonnes disponibles d'abord
+            cursor = conn.cursor()
+            cursor.execute("PRAGMA table_info(mesures)")
+            available_columns = {row[1] for row in cursor.fetchall()}
+            
+            # Construction dynamique de la requête selon les colonnes disponibles
+            base_columns = ['p70', 'h_garrot', 'p_thoracique', 'c_canon', 'l_corps', 'l_poitrine']
+            optional_columns = ['p_naiss', 'p10', 'p30']
+            
+            select_cols = ['b.*']
+            for col in base_columns:
+                select_cols.append(f'm.{col}')
+            for col in optional_columns:
+                if col in available_columns:
+                    select_cols.append(f'm.{col}')
+            
+            query = f"""
+                SELECT {', '.join(select_cols)}
                 FROM beliers b 
                 LEFT JOIN latest_measurements lm ON b.id = lm.id_animal
                 LEFT JOIN mesures m ON lm.last_mesure_id = m.id
             """
-            df = pd.read_sql(query, conn)
+            
+            try:
+                df = pd.read_sql(query, conn)
+            except sqlite3.OperationalError as e:
+                # Si latest_measurements pose problème, requête simple
+                logger.warning(f"Erreur jointure, fallback simple: {e}")
+                df = pd.read_sql("SELECT * FROM beliers", conn)
+                return df
             
             if df.empty:
                 return df
@@ -294,7 +344,6 @@ def save_animal(data: Dict) -> bool:
                   data.get('p_30j', 0), data.get('p_70j', 0), data['h_garrot'],
                   data['c_canon'], data['p_thoracique'], data['l_corps']))
             
-            # Mise à jour de la table latest_measurements
             update_latest_measurement(conn, data['id'])
             
             conn.commit()
@@ -311,7 +360,7 @@ def save_animal(data: Dict) -> bool:
         return False
 
 # ==========================================
-# 4. INTERFACE PRINCIPALE OPTIMISÉE
+# 4. INTERFACE PRINCIPALE
 # ==========================================
 def init_session_state():
     """Initialisation robuste du session state"""
@@ -326,16 +375,16 @@ def init_session_state():
             st.session_state[key] = value
 
 def render_metrics(df: pd.DataFrame):
-    """Affichage des métriques avec cache"""
+    """Affichage des métriques"""
     if df.empty:
         return
     
     c1, c2, c3, c4 = st.columns(4)
     metrics = {
         "Sujets": len(df),
-        "Elite": len(df[df['Statut'] != 'Standard']),
-        "Muscle Moy.": f"{df['Pct_Muscle'].mean():.1f}%" if not df['Pct_Muscle'].isna().all() else "N/A",
-        "Gras Moy.": f"{df['Gras_mm'].mean():.1f}mm" if not df['Gras_mm'].isna().all() else "N/A"
+        "Elite": len(df[df['Statut'] != 'Standard']) if 'Statut' in df.columns else 0,
+        "Muscle Moy.": f"{df['Pct_Muscle'].mean():.1f}%" if 'Pct_Muscle' in df.columns and not df['Pct_Muscle'].isna().all() else "N/A",
+        "Gras Moy.": f"{df['Gras_mm'].mean():.1f}mm" if 'Gras_mm' in df.columns and not df['Gras_mm'].isna().all() else "N/A"
     }
     
     cols = [c1, c2, c3, c4]
@@ -365,7 +414,7 @@ def main():
     
     df = load_data()
 
-    # Barre latérale optimisée
+    # Barre latérale
     with st.sidebar:
         st.title("💎 Expert Selector")
         search_query = st.text_input("🔍 Recherche par ID", 
@@ -404,23 +453,26 @@ def main():
         else:
             render_metrics(df)
             
-            # Graphique de distribution
+            # Graphique
             try:
-                fig = px.scatter(df_filtered, x='IC', y='Index', color='Statut', 
-                               size='p70', hover_data=['id', 'EUROP'],
-                               title="Matrice de Sélection (IC vs Index Global)")
-                st.plotly_chart(fig, use_container_width=True)
+                if 'IC' in df_filtered.columns and 'Index' in df_filtered.columns:
+                    fig = px.scatter(df_filtered, x='IC', y='Index', color='Statut', 
+                                   size='p70' if 'p70' in df_filtered.columns else None, 
+                                   hover_data=['id', 'EUROP'] if 'EUROP' in df_filtered.columns else ['id'],
+                                   title="Matrice de Sélection (IC vs Index Global)")
+                    st.plotly_chart(fig, use_container_width=True)
             except Exception as e:
                 st.error(f"Erreur affichage graphique: {e}")
             
-            # Tableau avec tri
+            # Tableau
             display_cols = ['id', 'race', 'p70', 'Pct_Muscle', 'EUROP', 'Statut', 'IC']
             available_cols = [col for col in display_cols if col in df_filtered.columns]
-            st.dataframe(
-                df_filtered[available_cols].sort_values('Index', ascending=False) if 'Index' in df_filtered.columns else df_filtered[available_cols],
-                use_container_width=True,
-                hide_index=True
-            )
+            if available_cols:
+                st.dataframe(
+                    df_filtered[available_cols].sort_values('Index', ascending=False) if 'Index' in df_filtered.columns else df_filtered[available_cols],
+                    use_container_width=True,
+                    hide_index=True
+                )
 
     # --- COMPOSITION PRO ---
     elif menu == "🥩 Composition":
@@ -433,40 +485,41 @@ def main():
             
             col1, col2 = st.columns([2, 1])
             with col1:
-                categories = ['Pct_Muscle', 'Pct_Gras', 'Pct_Os', 'IC']
-                values = [subj[cat] for cat in categories]
-                
-                fig_radar = go.Figure()
-                fig_radar.add_trace(go.Scatterpolar(
-                    r=values,
-                    theta=['Muscle %', 'Gras %', 'Os %', 'Conformation'],
-                    fill='toself',
-                    line_color='#2E7D32',
-                    name=subj['id']
-                ))
-                fig_radar.update_layout(
-                    polar=dict(radialaxis=dict(visible=True, range=[0, max(values) * 1.2])),
-                    showlegend=False
-                )
-                st.plotly_chart(fig_radar, use_container_width=True)
+                if all(col in subj for col in ['Pct_Muscle', 'Pct_Gras', 'Pct_Os', 'IC']):
+                    categories = ['Pct_Muscle', 'Pct_Gras', 'Pct_Os', 'IC']
+                    values = [subj[cat] for cat in categories]
+                    
+                    fig_radar = go.Figure()
+                    fig_radar.add_trace(go.Scatterpolar(
+                        r=values,
+                        theta=['Muscle %', 'Gras %', 'Os %', 'Conformation'],
+                        fill='toself',
+                        line_color='#2E7D32',
+                        name=subj['id']
+                    ))
+                    fig_radar.update_layout(
+                        polar=dict(radialaxis=dict(visible=True, range=[0, max(values) * 1.2])),
+                        showlegend=False
+                    )
+                    st.plotly_chart(fig_radar, use_container_width=True)
                 
             with col2:
-                st.markdown(f"""
+                html_content = f"""
                     <div class='analysis-box'>
                         <h4>📋 Fiche Technique</h4>
                         <b>ID:</b> {target}<br>
-                        <b>Classe EUROP:</b> <span style='font-size:24px'>{subj['EUROP']}</span><br>
-                        <b>Muscle:</b> {subj['Pct_Muscle']}%<br>
-                        <b>Gras:</b> {subj['Pct_Gras']}%<br>
-                        <b>Indice Conformation:</b> {subj['IC']}<br>
-                        <b>Score S90:</b> {subj['S90']}
+                        <b>Classe EUROP:</b> <span style='font-size:24px'>{subj.get('EUROP', 'N/A')}</span><br>
+                        <b>Muscle:</b> {subj.get('Pct_Muscle', 'N/A')}%<br>
+                        <b>Gras:</b> {subj.get('Pct_Gras', 'N/A')}%<br>
+                        <b>Indice Conformation:</b> {subj.get('IC', 'N/A')}<br>
+                        <b>Score S90:</b> {subj.get('S90', 'N/A')}
                     </div>
-                """, unsafe_allow_html=True)
+                """
+                st.markdown(html_content, unsafe_allow_html=True)
                 
-                # Recommandation
-                if subj['Statut'] == "⭐ ELITE PRO":
+                if 'Statut' in subj and subj['Statut'] == "⭐ ELITE PRO":
                     st.success("🏆 Recommandé pour la reproduction")
-                elif subj['Pct_Gras'] > 25:
+                elif 'Pct_Gras' in subj and subj['Pct_Gras'] > 25:
                     st.warning("⚠️ Surgras - Surveillance alimentaire recommandée")
         else:
             st.warning("Aucune donnée disponible. Veuillez indexer des animaux d'abord.")
@@ -497,8 +550,6 @@ def main():
                 if "Automatique" in mode_scanner:
                     with st.spinner("🧠 Analyse IA..."):
                         time.sleep(0.8)
-                        
-                        # Simulation validation cadrage
                         img_bytes = img.getvalue()
                         score_confiance = 85 + (hash(img_bytes) % 15)
                         
@@ -659,7 +710,7 @@ def main():
             if not df.empty:
                 st.metric("Total indexé", len(df))
                 elite_count = len(df[df['Statut'] != 'Standard']) if 'Statut' in df.columns else 0
-                st.metric("Taux d'élite", f"{(elite_count/len(df)*100):.1f}%")
+                st.metric("Taux d'élite", f"{(elite_count/len(df)*100):.1f}%" if len(df) > 0 else "0%")
                 
                 # Export CSV
                 csv = df.to_csv(index=False).encode('utf-8')
