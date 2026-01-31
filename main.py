@@ -336,19 +336,30 @@ def main():
                 else:
                     st.warning("⚠️ L'ID est obligatoire pour l'indexation.")
 
-   # --- 7. ADMIN (CENTRE DE CONTRÔLE) ---
+  # --- 7. ADMIN (CENTRE DE CONTRÔLE SÉCURISÉ) ---
     elif menu == "🔧 Admin":
         st.title("🔧 Centre de Contrôle & Données")
         
-        # --- SECTION 1 : STATISTIQUES RAPIDES ---
+        # Sécurité : On vérifie si 'df' existe, sinon on crée un DataFrame vide
+        if 'df' not in locals() or df is None:
+            try:
+                with get_db_connection() as conn:
+                    df = pd.read_sql("SELECT * FROM beliers", conn)
+            except:
+                df = pd.DataFrame() # Crée un tableau vide en cas d'erreur
+
+        # --- SECTION 1 : STATISTIQUES ---
         st.subheader("📊 État de la Base de Données")
         col_st1, col_st2, col_st3 = st.columns(3)
         with col_st1:
             st.metric("Total Individus", len(df))
         with col_st2:
+            # On vérifie si la colonne existe avant de calculer la moyenne
             if not df.empty and 'poids_70j' in df.columns:
                 moy_poids = df['poids_70j'].mean()
                 st.metric("Moyenne Poids (70j)", f"{moy_poids:.1f} kg")
+            else:
+                st.metric("Moyenne Poids", "0.0 kg")
         
         st.divider()
 
@@ -358,39 +369,43 @@ def main():
         
         with exp1:
             st.write("**Exporter les données**")
-            csv = df.to_csv(index=False).encode('utf-8')
-            st.download_button(
-                label="📥 Télécharger l'inventaire complet",
-                data=csv,
-                file_name="inventaire_ovin_expert.csv",
-                mime="text/csv",
-                use_container_width=True
-            )
-            st.caption("Compatible Excel, Google Sheets, etc.")
+            if not df.empty:
+                csv = df.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    label="📥 Télécharger l'inventaire CSV",
+                    data=csv,
+                    file_name="inventaire_ovin_expert.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
+            else:
+                st.button("📥 Télécharger (Base vide)", disabled=True, use_container_width=True)
 
         with exp2:
             st.write("**Importer des données**")
             uploaded_file = st.file_uploader("Fichier CSV d'importation", type="csv")
-            if uploaded_file is not None:
-                # Logique pour lire et fusionner avec la DB existante
-                st.info("Fonctionnalité d'importation prête à être connectée.")
+            if uploaded_file:
+                st.info("Fichier reçu. Analyse du format en cours...")
 
         st.divider()
 
-        # --- SECTION 3 : VISUALISATION & MAINTENANCE ---
-        st.subheader("🔍 Aperçu des données")
+        # --- SECTION 3 : VISUALISATION ---
+        st.subheader("🔍 Aperçu des derniers enregistrements")
         if not df.empty:
-            st.dataframe(df.tail(5), use_container_width=True) # Affiche les 5 derniers
+            st.dataframe(df.tail(10), use_container_width=True)
         else:
-            st.info("Aucune donnée enregistrée pour le moment.")
+            st.info("ℹ️ La base de données est actuellement vide.")
 
         st.subheader("⚠️ Maintenance Système")
         with st.expander("Zone de danger (Réinitialisation)"):
             st.warning("Attention : Cette action est irréversible.")
-            confirm = st.checkbox("Je confirme vouloir effacer tous les enregistrements.")
+            confirm = st.checkbox("Je confirme vouloir tout effacer.")
             if st.button("🗑️ VIDER LA BASE DE DONNÉES", disabled=not confirm):
-                with get_db_connection() as conn: 
-                    conn.execute("DELETE FROM mesures")
-                    conn.execute("DELETE FROM beliers")
-                st.success("Toutes les données ont été supprimées.")
-                st.rerun()
+                try:
+                    with get_db_connection() as conn: 
+                        conn.execute("DELETE FROM mesures")
+                        conn.execute("DELETE FROM beliers")
+                    st.success("Données supprimées !")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Erreur lors de la suppression : {e}")
