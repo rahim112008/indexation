@@ -195,119 +195,64 @@ def main():
             st.plotly_chart(fig_scat, use_container_width=True)
         else: st.info("Données insuffisantes.")
 
-    # --- SCANNER HYBRIDE (IA & GABARIT) ---
+    # --- SCANNER HYBRIDE FLEXIBLE ---
     elif menu == "📸 Scanner":
-        st.title("📸 Scanner Morphologique Hybride")
-        st.markdown("_Choisissez votre méthode de mesure selon vos besoins._")
-
-        mode_scanner = st.radio(
-            "Sélectionner le mode de scan",
-            ["🤖 Mode Automatique (IA)", "📏 Mode Manuel (Gabarit/Bâton)"],
-            horizontal=True
+        st.title("📸 Station de Scan Biométrique")
+        
+        # 1. Choix de la source
+        source = st.radio("Source de l'image", ["📷 Caméra en direct", "📁 Importer une photo"], horizontal=True)
+        
+        # 2. Choix du mode
+        mode_scanner = st.segmented_control(
+            "Méthode d'analyse",
+            options=["🤖 Automatique (IA)", "📏 Manuel (Gabarit/Bâton)"],
+            default="🤖 Automatique (IA)"
         )
         st.divider()
 
-        # --- MODE AUTOMATIQUE (IA) ---
-        if mode_scanner == "🤖 Mode Automatique (IA)":
-            st.subheader("🚀 Scan Rapide par IA")
-            st.info("Prenez une photo. L'IA estime automatiquement les mesures. Idéal pour les grands troupeaux.")
+        # Capture de l'image selon la source choisie
+        img = None
+        if source == "📷 Caméra en direct":
+            img = st.camera_input("Capturez le profil de l'animal")
+        else:
+            img = st.file_uploader("Choisissez une photo (JPG, PNG)", type=['jpg', 'jpeg', 'png'])
 
-            col_cam_auto, col_res_auto = st.columns([1, 1])
-
-            with col_cam_auto:
-                img_auto = st.camera_input("📷 Capture de profil (IA)")
+        if img:
+            col_img, col_data = st.columns([1.2, 1])
             
-            if img_auto:
-                with st.spinner("🧠 Analyse biométrique par IA en cours..."):
-                    # Simulation d'un délai de calcul
-                    time.sleep(1.5)
-                    
-                    # SIMULATION DE LA SORTIE DU MODÈLE IA
-                    mesures_ia = {
-                        "h_garrot": 73.8, 
-                        "c_canon": 8.3, 
-                        "p_thoracique": 85.1, 
-                        "l_corps": 83.5,
-                        "indice_confiance": "96%"
-                    }
-                    st.session_state['scan'] = mesures_ia
-                    st.session_state['auto_detected'] = True # Marqueur pour savoir que c'est de l'IA
+            with col_img:
+                st.image(img, caption="Image en cours d'analyse", use_container_width=True)
+                if mode_scanner == "📏 Manuel (Gabarit/Bâton)":
+                    st.info("💡 Utilisez un logiciel comme ImageJ pour mesurer les pixels, puis entrez les valeurs ci-contre.")
 
-                with col_res_auto:
-                    st.success(f"✅ Analyse IA terminée (Fiabilité: {mesures_ia['indice_confiance']})")
-                    c1, c2 = st.columns(2)
-                    c1.metric("Hauteur", f"{mesures_ia['h_garrot']} cm")
-                    c1.metric("Canon", f"{mesures_ia['c_canon']} cm")
-                    c2.metric("Thorax", f"{mesures_ia['p_thoracique']} cm")
-                    c2.metric("Longueur", f"{mesures_ia['l_corps']} cm")
-                    
-                    st.warning("⚠️ Mesures prêtes. Passez à l'onglet Saisie pour enregistrer.")
-                    if st.button("➡️ Transférer les mesures IA vers Saisie", type="primary"):
-                        st.session_state['go_saisie'] = True
-                        st.session_state['menu_nav'] = "✍️ Saisie" # Pour changer d'onglet si vous utilisez cette variable
-                        st.rerun()
+            with col_data:
+                if mode_scanner == "🤖 Automatique (IA)":
+                    with st.spinner("🧠 Algorithme de vision en cours..."):
+                        time.sleep(1.5) # Simulation du calcul
+                        # Simulation des résultats IA
+                        res = {"h_garrot": 73.5, "c_canon": 8.2, "p_thoracique": 84.0, "l_corps": 82.5}
+                        st.success("✅ Analyse IA terminée")
+                else:
+                    # Mode Manuel : l'utilisateur entre ses propres mesures de référence
+                    st.subheader("Calibration Manuelle")
+                    ref_val = st.number_input("Référence (ex: Bâton 100cm)", value=100.0)
+                    h_in = st.number_input("Hauteur mesurée (cm)", value=70.0)
+                    c_in = st.number_input("Canon mesuré (cm)", value=8.0)
+                    t_in = st.number_input("Thorax mesuré (cm)", value=82.0)
+                    l_in = st.number_input("Longueur mesurée (cm)", value=80.0)
+                    res = {"h_garrot": h_in, "c_canon": c_in, "p_thoracique": t_in, "l_corps": l_in}
 
-        # --- MODE MANUEL (GABARIT/BÂTON) ---
-        elif mode_scanner == "📏 Mode Manuel (Gabarit/Bâton)":
-            st.subheader("🔍 Scan Précis avec Référence (ImageJ-like)")
-            st.info("Utilisez un bâton d'1 mètre ou une référence connue. Cliquez sur les points pour mesurer.")
+                # Affichage des métriques finales
+                st.session_state['scan'] = res
+                m1, m2 = st.columns(2)
+                m1.metric("Hauteur", f"{res['h_garrot']} cm")
+                m1.metric("Canon", f"{res['c_canon']} cm")
+                m2.metric("Thorax", f"{res['p_thoracique']} cm")
+                m2.metric("Longueur", f"{res['l_corps']} cm")
 
-            col_cam_manual, col_tools_manual = st.columns([1, 1])
-
-            with col_cam_manual:
-                img_manual = st.camera_input("📷 Capture de profil (Manuel)")
-            
-            if img_manual:
-                # Ici, nous allons simuler le comportement d'un outil de mesure comme ImageJ
-                # Streamlit n'a pas de fonction "cliquer sur l'image et obtenir les coordonnées" native.
-                # Pour un vrai "ImageJ-like", il faudrait une librairie externe (ex: OpenCV + JS)
-                # Nous allons donc simuler le processus.
-                
-                with col_tools_manual:
-                    st.warning("Pour une implémentation réelle d'ImageJ-like, il faudrait une intégration JavaScript/OpenCV avancée pour cliquer sur l'image.")
-                    st.markdown("""
-                        **Simulation des mesures manuelles :**
-                        <ol>
-                            <li>Chargez la photo.</li>
-                            <li>Définissez la référence (ex: tracez une ligne sur votre bâton d'1m).</li>
-                            <li>Cliquez ensuite sur les points du mouton pour obtenir les mesures.</li>
-                        </ol>
-                        """, unsafe_allow_html=True)
-                    
-                    # Simulation de l'utilisateur qui entre les mesures
-                    st.subheader("Entrée Manuelle des Mesures")
-                    ref_size_cm = st.number_input("Taille de votre référence (cm)", min_value=1.0, value=100.0)
-                    st.info(f"💡 Votre référence de {ref_size_cm} cm est votre étalon.")
-
-                    # L'utilisateur entre manuellement les mesures après avoir cliqué sur l'image
-                    # Dans une vraie intégration, ces valeurs seraient remplies par les clics
-                    manual_hg = st.number_input("Hauteur Garrot (cm)", min_value=0.0, value=75.0)
-                    manual_cc = st.number_input("Tour de Canon (cm)", min_value=0.0, value=8.5)
-                    manual_pt = st.number_input("Périmètre Thorax (cm)", min_value=0.0, value=90.0)
-                    manual_lc = st.number_input("Longueur Corps (cm)", min_value=0.0, value=85.0)
-
-                    mesures_manual = {
-                        "h_garrot": manual_hg,
-                        "c_canon": manual_cc,
-                        "p_thoracique": manual_pt,
-                        "l_corps": manual_lc,
-                        "indice_confiance": "Manuelle"
-                    }
-                    st.session_state['scan'] = mesures_manual
-                    st.session_state['auto_detected'] = False # Marqueur pour savoir que c'est manuel
-
-                    if st.button("➡️ Transférer les mesures Manuelles vers Saisie", type="secondary"):
-                        st.session_state['go_saisie'] = True
-                        st.session_state['menu_nav'] = "✍️ Saisie"
-                        st.rerun()
-            else:
-                with col_tools_manual:
-                    st.info("Chargez une image pour commencer les mesures manuelles.")
-
-        # Correction de la variable menu_nav pour la Saisie
-        if 'menu_nav' in st.session_state and st.session_state['menu_nav'] == "✍️ Saisie":
-            st.session_state['menu_nav'] = None # Réinitialiser pour éviter une boucle
-            st.experimental_set_query_params(nav="✍️ Saisie") # Alternative pour changer de page si besoin
+                if st.button("🚀 ENVOYER VERS LA SAISIE", type="primary", use_container_width=True):
+                    st.session_state['go_saisie'] = True
+                    st.success("Données transférées ! Allez dans l'onglet Saisie.")
     # --- 6. SAISIE (VOTRE BLOC PERFECTIONNÉ) ---
     elif menu == "✍️ Saisie":
         st.title("✍️ Nouvelle Fiche")
