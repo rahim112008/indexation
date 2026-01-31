@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from typing import Dict, Tuple, Optional, List
 import time
 import logging
+import os
 from dataclasses import dataclass
 
 # Configuration du logging
@@ -43,84 +44,108 @@ st.markdown("""
 DB_NAME = "expert_ovin_pro.db"
 
 # ==========================================
-# 2. GESTION BASE DE DONNÉES OPTIMISÉE
+# 2. GESTION BASE DE DONNÉES CORRIGÉE
 # ==========================================
 @contextmanager
 def get_db_connection():
-    """Gestionnaire de connexion avec WAL mode pour meilleure concurrence"""
-    conn = sqlite3.connect(DB_NAME, check_same_thread=False, timeout=30.0, isolation_level=None)
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA synchronous=NORMAL")
-    conn.execute("PRAGMA cache_size=10000")
-    conn.execute("PRAGMA temp_store=memory")
+    """
+    Gestionnaire de connexion robuste sans isolation_level=None
+    pour permettre le contrôle explicite des transactions
+    """
+    conn = None
     try:
-        conn.execute("BEGIN IMMEDIATE")
+        conn = sqlite3.connect(DB_NAME, check_same_thread=False, timeout=30.0)
+        # Activation des clés étrangères
+        conn.execute("PRAGMA foreign_keys = ON")
+        # Mode WAL pour meilleure concurrence
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA cache_size=10000")
         yield conn
-        conn.commit()
-    except Exception as e:
-        conn.rollback()
-        logger.error(f"Erreur DB: {e}")
+    except sqlite3.Error as e:
+        logger.error(f"Erreur connexion SQLite: {e}")
+        if conn:
+            conn.rollback()
         raise e
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 def init_db():
-    """Initialisation avec index optimisés pour la performance"""
-    with get_db_connection() as conn:
-        # Table béliers avec contraintes
-        conn.execute('''
-            CREATE TABLE IF NOT EXISTS beliers (
-                id TEXT PRIMARY KEY, 
-                race TEXT NOT NULL, 
-                date_naiss TEXT,
-                objectif TEXT,
-                sexe TEXT CHECK(sexe IN ('Bélier', 'Brebis', 'Agneau/elle')),
-                statut_dentaire TEXT,
-                date_indexation TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        # Table mesures avec index composites
-        conn.execute('''
-            CREATE TABLE IF NOT EXISTS mesures (
-                id INTEGER PRIMARY KEY AUTOINCREMENT, 
-                id_animal TEXT NOT NULL,
-                date_mesure TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                p_naiss REAL DEFAULT 0.0,
-                p10 REAL DEFAULT 0.0, 
-                p30 REAL DEFAULT 0.0, 
-                p70 REAL DEFAULT 0.0,
-                h_garrot REAL CHECK(h_garrot > 0), 
-                c_canon REAL CHECK(c_canon > 0), 
-                p_thoracique REAL CHECK(p_thoracique > 0), 
-                l_corps REAL CHECK(l_corps > 0), 
-                l_poitrine REAL,
-                FOREIGN KEY (id_animal) REFERENCES beliers(id) ON DELETE CASCADE
-            )
-        ''')
-        
-        # Index pour accélérer les recherches
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_mesures_animal ON mesures(id_animal)')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_mesures_date ON mesures(date_mesure)')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_beliers_race ON beliers(race)')
-        
-        # Vue matérialisée (simulée via table) pour les dernières mesures
-        conn.execute('''
-            CREATE TABLE IF NOT EXISTS latest_measurements AS 
-            SELECT id_animal, MAX(id) as last_mesure_id 
-            FROM mesures GROUP BY id_animal
-        ''')
-        
-        # Trigger pour maintenance automatique de la vue
-        conn.execute('''
-            CREATE TRIGGER IF NOT EXISTS update_latest_after_insert 
-            AFTER INSERT ON mesures
-            BEGIN
-                DELETE FROM latest_measurements;
-                INSERT INTO latest_measurements 
-                SELECT id_animal, MAX(id) FROM mesures GROUP BY id_animal;
-            END
-        ''')
+    """Initialisation robuste avec vérification d'erreurs"""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Table béliers avec contraintes
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS beliers (
+                    id TEXT PRIMARY KEY, 
+                    race TEXT, 
+                    date_naiss TEXT,
+                    objectif TEXT,
+                    sexe TEXT CHECK(sexe IN ('Bélier', 'Brebis', 'Agneau/elle')),
+                    statut_dentaire TEXT,
+                    date_indexation TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
+            # Table mesures avec index
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS mesures (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, 
+                    id_animal TEXT NOT NULL,
+                    date_mesure TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    p_naiss REAL DEFAULT 0.0,
+                    p10 REAL DEFAULT 0.0, 
+                    p30 REAL DEFAULT 0.0, 
+                    p70 REAL DEFAULT 0.0,
+                    h_garrot REAL, 
+                    c_canon REAL, 
+                    p_thoracique REAL, 
+                    l_corps REAL, 
+                    l_poitrine REAL,
+                    FOREIGN KEY (id_animal) REFERENCES beliers(id) ON DELETE CASCADE
+                )
+            ''')
+            
+            # Index pour performances
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_mesures_animal ON mesures(id_animal)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_mesures_date ON mesures(date_mesure)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_beliers_race ON beliers(race)')
+            
+            # Table pour les dernières mesures (approche simplifiée sans trigger complexe)
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS latest_measurements (
+                    id_animal TEXT PRIMARY KEY,
+                    last_mesure_id INTEGER,
+                    FOREIGN KEY (id_animal) REFERENCES beliers(id) ON DELETE CASCADE,
+                    FOREIGN KEY (last_mesure_id) REFERENCES mesures(id) ON DELETE CASCADE
+                )
+            ''')
+            
+            conn.commit()
+            logger.info("Base de données initialisée avec succès")
+            
+    except Exception as e:
+        logger.error(f"Erreur initialisation DB: {e}")
+        st.error(f"❌ Erreur lors de l'initialisation de la base: {e}")
+        raise
+
+def update_latest_measurement(conn, animal_id: str):
+    """Met à jour la dernière mesure pour un animal (remplace le trigger)"""
+    try:
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM latest_measurements WHERE id_animal = ?', (animal_id,))
+        cursor.execute('''
+            INSERT INTO latest_measurements (id_animal, last_mesure_id)
+            SELECT id_animal, MAX(id) 
+            FROM mesures 
+            WHERE id_animal = ?
+            GROUP BY id_animal
+        ''', (animal_id,))
+    except Exception as e:
+        logger.error(f"Erreur mise à jour latest_measurements: {e}")
 
 # ==========================================
 # 3. MOTEUR DE CALCULS CARCASSE VECTORISÉ
@@ -144,11 +169,16 @@ def calculer_composition_vectorized(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
     
-    # Conversion en numérique avec gestion d'erreurs
+    # Copie pour éviter SettingWithCopyWarning
     df = df.copy()
+    
+    # Conversion en numérique avec gestion d'erreurs
     numeric_cols = ['p70', 'h_garrot', 'p_thoracique', 'c_canon']
     for col in numeric_cols:
-        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+        else:
+            df[col] = 0.0
     
     # Filtrage des valeurs invalides (vectorisé)
     mask_valid = (df['p70'] > 5) & (df['c_canon'] > 2) & (df['h_garrot'] > 0)
@@ -196,7 +226,7 @@ def calculer_composition_vectorized(df: pd.DataFrame) -> pd.DataFrame:
     df['Index'] = (df['p70'] * 0.4) + (df['S90'] * 0.6)
     
     # Calcul du statut Elite (percentile 85)
-    if len(df) > 0:
+    if len(df) > 0 and not df['Index'].isna().all():
         threshold = df['Index'].quantile(0.85)
         df['Statut'] = np.where(df['Index'] >= threshold, "⭐ ELITE PRO", "Standard")
     else:
@@ -204,12 +234,18 @@ def calculer_composition_vectorized(df: pd.DataFrame) -> pd.DataFrame:
     
     return df
 
-@st.cache_data(ttl=300)  # Cache 5 minutes au lieu de 2 secondes
+@st.cache_data(ttl=300)
 def load_data() -> pd.DataFrame:
-    """Chargement optimisé avec requête SQL allégée"""
+    """Chargement optimisé avec gestion d'erreurs améliorée"""
     try:
+        # Vérification existence fichier
+        if not os.path.exists(DB_NAME):
+            logger.warning(f"Base {DB_NAME} non trouvée, initialisation...")
+            init_db()
+            return pd.DataFrame()
+        
         with get_db_connection() as conn:
-            # Requête optimisée utilisant la vue latest_measurements
+            # Requête optimisée
             query = """
                 SELECT b.*, m.p70, m.h_garrot, m.p_thoracique, 
                        m.c_canon, m.l_corps, m.l_poitrine, m.p_naiss, m.p10, m.p30
@@ -222,26 +258,27 @@ def load_data() -> pd.DataFrame:
             if df.empty:
                 return df
             
-            # Calculs vectorisés
             return calculer_composition_vectorized(df)
             
     except Exception as e:
         logger.error(f"Erreur chargement données: {e}")
-        st.error("Erreur de connexion à la base de données")
+        st.error(f"⚠️ Impossible de charger les données: {e}")
         return pd.DataFrame()
 
 def save_animal(data: Dict) -> bool:
     """Sauvegarde transactionnelle avec validation"""
     try:
         with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
             # Vérification doublon
-            cursor = conn.execute("SELECT 1 FROM beliers WHERE id = ?", (data['id'],))
+            cursor.execute("SELECT 1 FROM beliers WHERE id = ?", (data['id'],))
             if cursor.fetchone():
                 st.error(f"❌ L'animal {data['id']} existe déjà dans la base!")
                 return False
             
             # Insertion bélier
-            conn.execute("""
+            cursor.execute("""
                 INSERT INTO beliers (id, race, date_naiss, objectif, sexe, statut_dentaire)
                 VALUES (?, ?, ?, ?, ?, ?)
             """, (data['id'], data.get('race', 'Non spécifiée'), 
@@ -249,7 +286,7 @@ def save_animal(data: Dict) -> bool:
                   data['sexe'], data.get('statut_dentaire')))
             
             # Insertion mesures
-            conn.execute("""
+            cursor.execute("""
                 INSERT INTO mesures 
                 (id_animal, p_naiss, p10, p30, p70, h_garrot, c_canon, p_thoracique, l_corps)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -257,15 +294,20 @@ def save_animal(data: Dict) -> bool:
                   data.get('p_30j', 0), data.get('p_70j', 0), data['h_garrot'],
                   data['c_canon'], data['p_thoracique'], data['l_corps']))
             
+            # Mise à jour de la table latest_measurements
+            update_latest_measurement(conn, data['id'])
+            
+            conn.commit()
             logger.info(f"Animal {data['id']} indexé avec succès")
             return True
             
     except sqlite3.IntegrityError as e:
-        st.error(f"Erreur d'intégrité: {e}")
+        logger.error(f"Erreur d'intégrité: {e}")
+        st.error(f"Erreur de données: {e}")
         return False
     except Exception as e:
         logger.error(f"Erreur sauvegarde: {e}")
-        st.error("Erreur technique lors de la sauvegarde")
+        st.error(f"Erreur technique: {e}")
         return False
 
 # ==========================================
@@ -292,8 +334,8 @@ def render_metrics(df: pd.DataFrame):
     metrics = {
         "Sujets": len(df),
         "Elite": len(df[df['Statut'] != 'Standard']),
-        "Muscle Moy.": f"{df['Pct_Muscle'].mean():.1f}%",
-        "Gras Moy.": f"{df['Gras_mm'].mean():.1f}mm"
+        "Muscle Moy.": f"{df['Pct_Muscle'].mean():.1f}%" if not df['Pct_Muscle'].isna().all() else "N/A",
+        "Gras Moy.": f"{df['Gras_mm'].mean():.1f}mm" if not df['Gras_mm'].isna().all() else "N/A"
     }
     
     cols = [c1, c2, c3, c4]
@@ -307,7 +349,13 @@ def render_metrics(df: pd.DataFrame):
             """, unsafe_allow_html=True)
 
 def main():
-    init_db()
+    # Initialisation DB avec gestion d'erreur
+    try:
+        init_db()
+    except Exception as e:
+        st.error("❌ Impossible d'initialiser la base de données. Vérifiez les permissions d'écriture.")
+        st.stop()
+    
     init_session_state()
     
     # Gestion du refresh après insertion
@@ -347,24 +395,29 @@ def main():
         st.title("🏆 Tableau de Bord")
         if df.empty:
             st.info("🐑 Commencez par le Scanner ou la Saisie pour indexer vos premiers animaux.")
-            # Affichage exemple
             st.markdown("""
             **Guide rapide:**
-            1. 📸 **Scanner**: Capturez les mensurations via photo ou manuellement
-            2. ✍️ **Saisie**: Complétez l'identification et l'historique
+            1. 📸 **Scanner**: Capturez les mensurations
+            2. ✍️ **Saisie**: Complétez l'identification  
             3. 🥩 **Composition**: Analysez la qualité carcasse
             """)
         else:
             render_metrics(df)
             
             # Graphique de distribution
-            fig = px.scatter(df_filtered, x='IC', y='Index', color='Statut', 
-                           size='p70', hover_data=['id', 'EUROP'],
-                           title="Matrice de Sélection (IC vs Index Global)")
-            st.plotly_chart(fig, use_container_width=True)
+            try:
+                fig = px.scatter(df_filtered, x='IC', y='Index', color='Statut', 
+                               size='p70', hover_data=['id', 'EUROP'],
+                               title="Matrice de Sélection (IC vs Index Global)")
+                st.plotly_chart(fig, use_container_width=True)
+            except Exception as e:
+                st.error(f"Erreur affichage graphique: {e}")
             
+            # Tableau avec tri
+            display_cols = ['id', 'race', 'p70', 'Pct_Muscle', 'EUROP', 'Statut', 'IC']
+            available_cols = [col for col in display_cols if col in df_filtered.columns]
             st.dataframe(
-                df_filtered[['id', 'race', 'p70', 'Pct_Muscle', 'EUROP', 'Statut', 'IC']].sort_values('Index', ascending=False),
+                df_filtered[available_cols].sort_values('Index', ascending=False) if 'Index' in df_filtered.columns else df_filtered[available_cols],
                 use_container_width=True,
                 hide_index=True
             )
@@ -443,11 +496,11 @@ def main():
             with col_res:
                 if "Automatique" in mode_scanner:
                     with st.spinner("🧠 Analyse IA..."):
-                        time.sleep(0.8)  # Simulation traitement
+                        time.sleep(0.8)
                         
-                        # Simulation validation cadrage (à remplacer par vraie IA)
+                        # Simulation validation cadrage
                         img_bytes = img.getvalue()
-                        score_confiance = 85 + (hash(img_bytes) % 15)  # Simu cohérente
+                        score_confiance = 85 + (hash(img_bytes) % 15)
                         
                         if score_confiance > 80:
                             st.success(f"✅ **CADRAGE VALIDE ({score_confiance}%)**")
@@ -487,7 +540,6 @@ def main():
     elif menu == "✍️ Saisie":
         st.title("✍️ Indexation et Identification")
         
-        # Récupération données scanner
         sd = st.session_state.get('scan', {})
         auto_fill = st.session_state.get('go_saisie', False)
         
@@ -499,9 +551,7 @@ def main():
             st.subheader("🆔 État Civil")
             c1, c2, c3 = st.columns(3)
             with c1:
-                id_animal = st.text_input("N° Boucle / ID *", 
-                                        value="" if not auto_fill else "",
-                                        key="input_id")
+                id_animal = st.text_input("N° Boucle / ID *", key="input_id")
             with c2:
                 statut_dentaire = st.selectbox("État Dentaire", 
                     ["Agneau (Dents de lait)", "2 Dents (12-18 mois)", "4 Dents (2 ans)", 
@@ -510,7 +560,6 @@ def main():
                 sexe = st.radio("Sexe", ["Bélier", "Brebis", "Agneau/elle"], 
                               horizontal=True, index=0)
             
-            # Race et objectif
             c4, c5 = st.columns(2)
             with c4:
                 race = st.text_input("Race", placeholder="Ouled Djellal, etc.")
@@ -528,15 +577,13 @@ def main():
             with cp3:
                 p_30j = st.number_input("30 jours", 0.0, 50.0, 0.0, 0.1)
             with cp4:
-                p_70j = st.number_input("70 jours/Actuel", 0.0, 150.0, 
-                                      value=float(sd.get('p70', 0.0)) if auto_fill else 0.0, 
-                                      step=0.1)
+                default_p70 = float(sd.get('p70', 0.0)) if auto_fill else 0.0
+                p_70j = st.number_input("70 jours/Actuel", 0.0, 150.0, default_p70, 0.1)
 
             st.divider()
             st.subheader("📏 Morphologie (Scanner)")
             cm1, cm2, cm3, cm4 = st.columns(4)
             
-            # Valeurs par défaut depuis scanner si disponibles
             defaults = {
                 'h_garrot': float(sd.get('h_garrot', 0.0)) if auto_fill else 0.0,
                 'c_canon': float(sd.get('c_canon', 0.0)) if auto_fill else 0.0,
@@ -594,19 +641,25 @@ def main():
             if st.button("🗑️ Vider la base de données", type="secondary"):
                 confirm = st.checkbox("Je confirme la suppression définitive")
                 if confirm:
-                    with get_db_connection() as conn:
-                        conn.execute("DELETE FROM mesures")
-                        conn.execute("DELETE FROM beliers")
-                        conn.execute("DELETE FROM latest_measurements")
-                    st.cache_data.clear()
-                    st.success("Base de données réinitialisée")
-                    st.rerun()
+                    try:
+                        with get_db_connection() as conn:
+                            cursor = conn.cursor()
+                            cursor.execute("DELETE FROM latest_measurements")
+                            cursor.execute("DELETE FROM mesures")
+                            cursor.execute("DELETE FROM beliers")
+                            conn.commit()
+                        st.cache_data.clear()
+                        st.success("Base de données réinitialisée")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Erreur lors de la suppression: {e}")
         
         with col2:
             st.subheader("Statistiques")
             if not df.empty:
                 st.metric("Total indexé", len(df))
-                st.metric("Taux d'élite", f"{(len(df[df['Statut'] != 'Standard'])/len(df)*100):.1f}%")
+                elite_count = len(df[df['Statut'] != 'Standard']) if 'Statut' in df.columns else 0
+                st.metric("Taux d'élite", f"{(elite_count/len(df)*100):.1f}%")
                 
                 # Export CSV
                 csv = df.to_csv(index=False).encode('utf-8')
