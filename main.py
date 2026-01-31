@@ -225,7 +225,7 @@ def main():
                         
                         # --- LOGIQUE DE VALIDATION ---
                         # Ici, on simule une détection : si l'image est incomplète
-                        image_est_complete = False  # Changez à True pour tester le succès
+                        image_est_complete = True  # Changez à True pour tester le succès
                         score_confiance = 65 if not image_est_complete else 98
                         
                         if not image_est_complete:
