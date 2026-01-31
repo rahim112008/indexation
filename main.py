@@ -336,14 +336,61 @@ def main():
                 else:
                     st.warning("⚠️ L'ID est obligatoire pour l'indexation.")
 
-    # --- 7. ADMIN ---
+   # --- 7. ADMIN (CENTRE DE CONTRÔLE) ---
     elif menu == "🔧 Admin":
-        st.title("🔧 Administration")
-        if st.button("🗑️ Vider TOUTES les données"):
-            with get_db_connection() as conn: 
-                conn.execute("DELETE FROM mesures"); conn.execute("DELETE FROM beliers")
-            st.warning("Base de données réinitialisée."); st.rerun()
-        st.download_button("📥 Télécharger CSV", df.to_csv(index=False), "export_ovins.csv", "text/csv")
+        st.title("🔧 Centre de Contrôle & Données")
+        
+        # --- SECTION 1 : STATISTIQUES RAPIDES ---
+        st.subheader("📊 État de la Base de Données")
+        col_st1, col_st2, col_st3 = st.columns(3)
+        with col_st1:
+            st.metric("Total Individus", len(df))
+        with col_st2:
+            if not df.empty and 'poids_70j' in df.columns:
+                moy_poids = df['poids_70j'].mean()
+                st.metric("Moyenne Poids (70j)", f"{moy_poids:.1f} kg")
+        
+        st.divider()
 
-if __name__ == "__main__":
-    main()
+        # --- SECTION 2 : EXPORT & IMPORT ---
+        st.subheader("📥 Gestion des Flux (Excel/CSV)")
+        exp1, exp2 = st.columns(2)
+        
+        with exp1:
+            st.write("**Exporter les données**")
+            csv = df.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="📥 Télécharger l'inventaire complet",
+                data=csv,
+                file_name="inventaire_ovin_expert.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+            st.caption("Compatible Excel, Google Sheets, etc.")
+
+        with exp2:
+            st.write("**Importer des données**")
+            uploaded_file = st.file_uploader("Fichier CSV d'importation", type="csv")
+            if uploaded_file is not None:
+                # Logique pour lire et fusionner avec la DB existante
+                st.info("Fonctionnalité d'importation prête à être connectée.")
+
+        st.divider()
+
+        # --- SECTION 3 : VISUALISATION & MAINTENANCE ---
+        st.subheader("🔍 Aperçu des données")
+        if not df.empty:
+            st.dataframe(df.tail(5), use_container_width=True) # Affiche les 5 derniers
+        else:
+            st.info("Aucune donnée enregistrée pour le moment.")
+
+        st.subheader("⚠️ Maintenance Système")
+        with st.expander("Zone de danger (Réinitialisation)"):
+            st.warning("Attention : Cette action est irréversible.")
+            confirm = st.checkbox("Je confirme vouloir effacer tous les enregistrements.")
+            if st.button("🗑️ VIDER LA BASE DE DONNÉES", disabled=not confirm):
+                with get_db_connection() as conn: 
+                    conn.execute("DELETE FROM mesures")
+                    conn.execute("DELETE FROM beliers")
+                st.success("Toutes les données ont été supprimées.")
+                st.rerun()
