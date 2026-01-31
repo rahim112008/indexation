@@ -180,6 +180,7 @@ def update_latest_measurement(conn, animal_id: str):
         ''', (animal_id,))
     except Exception as e:
         logger.error(f"Erreur mise à jour latest_measurements: {e}")
+        raise  # Re-raise pour voir l'erreur
 
 # ==========================================
 # 3. GÉNÉRATION DE DONNÉES DE TEST (50 INDIVIDUS)
@@ -258,17 +259,24 @@ def generate_test_data():
     return data_list
 
 def insert_test_data():
-    """Insère les 50 individus de test dans la base"""
+    """Insère les 50 individus de test dans la base - VERSION DÉBOGUÉE"""
     try:
         test_data = generate_test_data()
         inserted = 0
         errors = 0
+        error_details = []
         
         with get_db_connection() as conn:
             cursor = conn.cursor()
             
             for data in test_data:
                 try:
+                    # Vérifier si l'ID existe déjà
+                    cursor.execute("SELECT 1 FROM beliers WHERE id = ?", (data['id'],))
+                    if cursor.fetchone():
+                        errors += 1
+                        continue  # Skip si existe déjà
+                    
                     # Insertion bélier
                     cursor.execute("""
                         INSERT INTO beliers (id, race, objectif, sexe, statut_dentaire)
@@ -285,22 +293,24 @@ def insert_test_data():
                           data['p_30j'], data['p_70j'], data['h_garrot'],
                           data['c_canon'], data['p_thoracique'], data['l_corps']))
                     
+                    # Mise à jour latest_measurements
                     update_latest_measurement(conn, data['id'])
                     inserted += 1
                     
-                except sqlite3.IntegrityError:
-                    errors += 1  # Doublon (normal si déjà inséré)
-                    continue
                 except Exception as e:
-                    logger.error(f"Erreur insertion {data['id']}: {e}")
+                    error_details.append(f"{data['id']}: {str(e)}")
                     errors += 1
+                    continue
             
             conn.commit()
         
-        return inserted, errors
+        if errors > 0 and inserted == 0:
+            return inserted, errors, "Tous les individus existent déjà ou erreurs: " + "; ".join(error_details[:3])
+        return inserted, errors, None
+        
     except Exception as e:
-        logger.error(f"Erreur génération données test: {e}")
-        return 0, 50
+        logger.error(f"Erreur majeure génération données test: {e}")
+        return 0, 50, str(e)
 
 # ==========================================
 # 4. MOTEUR DE CALCULS CARCASSE VECTORISÉ
@@ -386,7 +396,7 @@ def calculer_composition_vectorized(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 @st.cache_data(ttl=300)
-def load_data() -> pd.DataFrame():
+def load_data() -> pd.DataFrame:
     """Chargement avec gestion dynamique des colonnes"""
     try:
         if not os.path.exists(DB_NAME):
@@ -855,24 +865,47 @@ def main():
             st.subheader("🧪 Données de Test")
             st.info("Générez 50 individus fictifs pour tester l'application et voir la détection des élites.")
             
+            # Option pour forcer la régénération
+            force_regen = st.checkbox("Forcer la régénération (supprimer d'abord les TEST_ existants)", value=False)
+            
             if st.button("🎲 GÉNÉRER 50 INDIVIDUS DE TEST", type="primary", use_container_width=True):
-                with st.spinner("Génération en cours..."):
-                    inserted, errors = insert_test_data()
-                    if inserted > 0:
-                        st.session_state['data_refresh'] = True
-                        st.success(f"✅ {inserted} individus générés avec succès!")
-                        if errors > 0:
-                            st.info(f"ℹ️ {errors} doublons ignorés (déjà existants)")
-                        st.balloons()
-                        time.sleep(1)
-                        st.rerun()
-                    else:
-                        st.warning("Aucun individu inséré (peut-être déjà existants?)")
+                try:
+                    # Si force_regen coché, supprimer d'abord les TEST_
+                    if force_regen:
+                        with st.spinner("Suppression des anciens TEST_..."):
+                            with get_db_connection() as conn:
+                                cursor = conn.cursor()
+                                cursor.execute("DELETE FROM latest_measurements WHERE id_animal LIKE 'TEST_%'")
+                                cursor.execute("DELETE FROM mesures WHERE id_animal LIKE 'TEST_%'")
+                                cursor.execute("DELETE FROM beliers WHERE id LIKE 'TEST_%'")
+                                conn.commit()
+                            st.cache_data.clear()
+                            st.success("Anciens TEST_ supprimés")
+                    
+                    with st.spinner("Génération des 50 individus en cours..."):
+                        inserted, errors, msg = insert_test_data()
+                        
+                        if msg and inserted == 0:
+                            st.error(f"❌ {msg}")
+                        elif inserted > 0:
+                            st.session_state['data_refresh'] = True
+                            st.success(f"✅ {inserted} individus générés avec succès!")
+                            if errors > 0:
+                                st.warning(f"⚠️ {errors} individus ignorés (existants déjà)")
+                            st.balloons()
+                            time.sleep(1)
+                            st.rerun()
+                        else:
+                            st.warning("⚠️ Aucun individu inséré. Vérifiez si les TEST_ existent déjà.")
+                            
+                except Exception as e:
+                    st.error(f"💥 Erreur critique: {str(e)}")
+                    st.exception(e)  # Affiche le détail complet de l'erreur
         
         with col2:
             st.subheader("🗑️ Maintenance")
-            if st.button("Vider la base de données", type="secondary"):
-                confirm = st.checkbox("Je confirme la suppression définitive de TOUTES les données")
+            if st.button("🗑️ Vider TOUTE la base", type="secondary"):
+                confirm = st.checkbox("Je confirme la suppression définitive de TOUTES les données", key="confirm_delete")
                 if confirm:
                     try:
                         with get_db_connection() as conn:
@@ -890,7 +923,7 @@ def main():
             # Statistiques
             if not df.empty:
                 st.divider()
-                st.subheader("📊 Statistiques")
+                st.subheader("📊 Statistiques Actuelles")
                 st.metric("Total indexé", len(df))
                 
                 if 'Statut' in df.columns:
@@ -898,17 +931,24 @@ def main():
                     st.metric("Nombre d'Élites", n_elite, f"{(n_elite/len(df)*100):.1f}%")
                 
                 if 'EUROP' in df.columns:
-                    st.write("Répartition EUROP:")
-                    europ_stats = df['EUROP'].value_counts()
+                    st.write("Distribution EUROP:")
+                    europ_stats = df['EUROP'].value_counts().sort_index()
                     for cls, count in europ_stats.items():
-                        st.write(f"- Classe {cls}: {count}")
+                        st.write(f"• Classe {cls}: {count} individus")
+                
+                if 'sexe' in df.columns:
+                    st.write("Distribution par sexe:")
+                    sexe_stats = df['sexe'].value_counts()
+                    for sexe, count in sexe_stats.items():
+                        st.write(f"• {sexe}: {count}")
                 
                 # Export CSV
+                st.divider()
                 csv = df.to_csv(index=False).encode('utf-8')
                 st.download_button(
-                    label="📥 Exporter CSV",
+                    label="📥 Exporter CSV complet",
                     data=csv,
-                    file_name=f"export_ovin_{datetime.now().strftime('%Y%m%d')}.csv",
+                    file_name=f"export_ovin_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
                     mime='text/csv'
                 )
 
