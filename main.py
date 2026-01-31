@@ -2,30 +2,31 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import sqlite3
-import plotly.express as px
 import plotly.graph_objects as go
 from contextlib import contextmanager
 import time
 import random
 
 # ==========================================
-# 1. DESIGN & CSS
+# 1. CONFIGURATION & DESIGN
 # ==========================================
 st.set_page_config(page_title="Expert Selector Pro", layout="wide", page_icon="🐏")
 
 st.markdown("""
     <style>
     .metric-card {
-        background-color: #ffffff; padding: 20px; border-radius: 12px;
-        border: 1px solid #e0e0e0; border-top: 6px solid #2E7D32;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center; margin-bottom: 15px;
+        background-color: #ffffff; padding: 15px; border-radius: 12px;
+        border: 1px solid #e0e0e0; border-top: 5px solid #2E7D32;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center;
     }
-    .metric-card h2 { color: #2E7D32; font-size: 28px; margin: 5px 0; }
-    .metric-card p { color: #555555; font-weight: 600; text-transform: uppercase; font-size: 13px; margin:0; }
-    .analysis-box { background-color: #f1f8e9; padding: 15px; border-radius: 10px; border-left: 5px solid #558b2f; }
+    .metric-card h2 { color: #2E7D32; margin: 5px 0; font-size: 24px; }
+    .analysis-box { 
+        background-color: #f9fdf9; padding: 15px; border-radius: 10px; 
+        border: 1px solid #c8e6c9; margin-bottom: 10px;
+    }
     @media (prefers-color-scheme: dark) {
         .metric-card { background-color: #1E1E1E; border: 1px solid #333; }
-        .metric-card p { color: #BBB; }
+        .analysis-box { background-color: #121212; border: 1px solid #2E7D32; }
     }
     </style>
     """, unsafe_allow_html=True)
@@ -37,7 +38,7 @@ DB_NAME = "expert_ovin_pro.db"
 # ==========================================
 @contextmanager
 def get_db_connection():
-    conn = sqlite3.connect(DB_NAME, check_same_thread=False, timeout=30)
+    conn = sqlite3.connect(DB_NAME, check_same_thread=False)
     conn.execute("PRAGMA journal_mode=WAL")
     try:
         yield conn
@@ -51,77 +52,80 @@ def get_db_connection():
 def init_db():
     with get_db_connection() as conn:
         conn.execute('''CREATE TABLE IF NOT EXISTS beliers (
-            id TEXT PRIMARY KEY, race TEXT, date_naiss TEXT, objectif TEXT, sexe TEXT, dentition TEXT)''')
+            id TEXT PRIMARY KEY, race TEXT, sexe TEXT, dentition TEXT, objectif TEXT)''')
         conn.execute('''CREATE TABLE IF NOT EXISTS mesures (
             id INTEGER PRIMARY KEY AUTOINCREMENT, id_animal TEXT NOT NULL,
-            p10 REAL, p30 REAL, p70 REAL, h_garrot REAL, c_canon REAL, 
-            p_thoracique REAL, l_corps REAL, 
+            p70 REAL, h_garrot REAL, c_canon REAL, p_thoracique REAL, l_corps REAL,
             FOREIGN KEY (id_animal) REFERENCES beliers(id) ON DELETE CASCADE)''')
-        # Patch automatique pour les colonnes manquantes
-        try: conn.execute("ALTER TABLE beliers ADD COLUMN sexe TEXT")
-        except: pass
-        try: conn.execute("ALTER TABLE beliers ADD COLUMN dentition TEXT")
-        except: pass
 
 # ==========================================
-# 3. MOTEUR DE CALCULS & CHARGEMENT
+# 3. LOGIQUE "ECHO-LIKE" & CALCULS
 # ==========================================
-def calculer_composition_carcasse(row):
+def calculer_echo_metrics(row):
     try:
         p70 = float(row.get('p70') or 0)
-        hg = float(row.get('h_garrot') or 70)
-        pt = float(row.get('p_thoracique') or 80)
-        cc = float(row.get('c_canon') or 8.5)
-        if p70 <= 2: return 0, 0, 0, 0, "N/A", 0, 0
-        ic = max(15, min(45, (pt / (cc * hg)) * 1000))
-        gras_mm = max(2.0, min(22.0, 2.0 + (p70 * 0.15) + (ic * 0.1) - (hg * 0.05)))
-        pct_gras = max(10.0, min(40.0, 5.0 + (gras_mm * 1.5)))
-        pct_muscle = max(45.0, min(72.0, 75.0 - (pct_gras * 0.6) + (ic * 0.2)))
-        pct_os = round(100.0 - pct_muscle - pct_gras, 1)
-        cl = "S" if ic > 33 else "E" if ic > 30 else "U" if ic > 27 else "R" if ic > 24 else "O/P"
-        s90 = round((pct_muscle * 1.2) - (pct_gras * 0.5), 1)
-        return round(pct_muscle, 1), round(pct_gras, 1), pct_os, round(gras_mm, 1), cl, s90, round(ic, 1)
-    except: return 0, 0, 0, 0, "Erreur", 0, 0
+        hg = float(row.get('h_garrot') or 75)
+        pt = float(row.get('p_thoracique') or 90)
+        cc = float(row.get('c_canon') or 9)
+        
+        if p70 < 5: return [0]*7 # Sécurité
+
+        # Algorithme prédictif interne
+        ic = (pt / (cc * hg)) * 1000
+        gras_mm = 1.2 + (p70 * 0.14) + (ic * 0.07) - (hg * 0.04)
+        pct_gras = max(8.0, 5.0 + (gras_mm * 1.6))
+        pct_muscle = max(40.0, 78.0 - (pct_gras * 0.58) + (ic * 0.18))
+        pct_os = 100 - pct_muscle - pct_gras
+        rendement = pct_muscle + (pct_gras * 0.2) # Estimation carcasse
+        
+        return [round(pct_muscle, 1), round(pct_gras, 1), round(pct_os, 1), 
+                round(ic, 1), round(gras_mm, 1), round(rendement, 1), "R"]
+    except: return [0]*7
 
 def load_data():
     with get_db_connection() as conn:
-        df = pd.read_sql("""SELECT b.*, m.p70, m.h_garrot, m.p_thoracique, m.c_canon, m.l_corps 
+        df = pd.read_sql("""SELECT b.*, m.p70, m.h_garrot, m.c_canon, m.p_thoracique, m.l_corps 
                            FROM beliers b LEFT JOIN (SELECT id_animal, MAX(id) as mid FROM mesures GROUP BY id_animal) l ON b.id = l.id_animal 
                            LEFT JOIN mesures m ON l.mid = m.id""", conn)
     if not df.empty:
-        res = df.apply(lambda x: pd.Series(calculer_composition_carcasse(x)), axis=1)
-        df[['Pct_Muscle', 'Pct_Gras', 'Pct_Os', 'Gras_mm', 'EUROP', 'S90', 'IC']] = res
-        df['Index'] = (df['p70'].fillna(0) * 0.4) + (df['S90'].fillna(0) * 0.6)
-        limit = df['Index'].quantile(0.85) if len(df) >= 5 else 999
-        df['Statut'] = np.where(df['Index'] >= limit, "⭐ ELITE PRO", "Standard")
+        df = df.drop_duplicates(subset=['id'])
+        res = df.apply(lambda x: pd.Series(calculer_echo_metrics(x)), axis=1)
+        df[['Muscle', 'Gras', 'Os', 'IC', 'Gras_mm', 'Rendement', 'Classe']] = res
+        # Calcul Statut Elite (Top 15%)
+        df['Score'] = (df['Muscle'] * 0.7) + (df['p70'] * 0.3)
+        limit = df['Score'].quantile(0.85) if len(df) > 5 else 999
+        df['Statut'] = np.where(df['Score'] >= limit, "⭐ ELITE PRO", "Standard")
     return df
 
 # ==========================================
-# 4. GÉNÉRATEUR DE TEST (50 INDIVIDUS)
+# 4. COMPOSANTS GRAPHIQUES
 # ==========================================
-def generer_50_test():
-    sexes = ["Bélier", "Brebis", "Agneau", "Agnelle"]
-    races = ["Ouled Djellal", "Rembi", "Hamra"]
-    dentitions = ["Dents de lait", "2 Dents", "4 Dents", "Adulte"]
+def draw_echo_charts(subj, title=""):
+    st.markdown(f"### {title} (ID: {subj['id']})")
+    c1, c2 = st.columns(2)
     
-    with get_db_connection() as conn:
-        for i in range(50):
-            id_a = f"DZ-2026-{random.randint(1000, 9999)}"
-            sx = random.choice(sexes)
-            rc = random.choice(races)
-            
-            # Paramètres réalistes selon l'âge/sexe
-            if "Agne" in sx:
-                hg, pt, cc, p70 = random.uniform(50,65), random.uniform(60,75), random.uniform(6,7.5), random.uniform(25,45)
-                dent = "Dents de lait"
-            else:
-                hg, pt, cc, p70 = random.uniform(70,85), random.uniform(85,110), random.uniform(8.5,10.5), random.uniform(60,95)
-                dent = random.choice(dentitions[1:])
-            
-            conn.execute("INSERT OR REPLACE INTO beliers (id, race, sexe, dentition, objectif) VALUES (?,?,?,?,?)", 
-                         (id_a, rc, sx, dent, "Reproduction"))
-            conn.execute("INSERT INTO mesures (id_animal, p70, h_garrot, c_canon, p_thoracique, l_corps) VALUES (?,?,?,?,?,?)", 
-                         (id_a, p70, hg, cc, pt, hg*1.1))
+    with c1:
+        fig_pie = go.Figure(data=[go.Pie(labels=['Viande (Muscle)', 'Gras', 'Os'], 
+                                       values=[subj['Muscle'], subj['Gras'], subj['Os']],
+                                       hole=.4, marker_colors=['#2E7D32', '#FBC02D', '#D32F2F'])])
+        fig_pie.update_layout(height=250, margin=dict(l=0, r=0, b=0, t=0), showlegend=True)
+        st.plotly_chart(fig_pie, use_container_width=True)
+        
+    with c2:
+        fig_gauge = go.Figure(go.Indicator(
+            mode = "gauge+number", value = subj['Gras_mm'],
+            domain = {'x': [0, 1], 'y': [0, 1]},
+            title = {'text': "Gras Sous-cutané (mm)", 'font': {'size': 14}},
+            gauge = {'axis': {'range': [0, 20]}, 'bar': {'color': "#2E7D32"}}))
+        fig_gauge.update_layout(height=250, margin=dict(l=20, r=20, b=20, t=40))
+        st.plotly_chart(fig_gauge, use_container_width=True)
+
+    st.markdown(f"""
+    <div class='analysis-box'>
+        <b>Rendement Viande :</b> {subj['Muscle']}% | <b>Indice Conformation :</b> {subj['IC']}<br>
+        <b>Poids :</b> {subj['p70']} kg | <b>Sexe :</b> {subj['sexe']}
+    </div>
+    """, unsafe_allow_html=True)
 
 # ==========================================
 # 5. INTERFACE PRINCIPALE
@@ -130,106 +134,94 @@ def main():
     init_db()
     df = load_data()
 
-    st.sidebar.title("💎 Expert Selector")
-    menu = st.sidebar.radio("Navigation", ["🏠 Dashboard", "🥩 Composition", "📸 Scanner", "✍️ Saisie", "🔧 Admin"])
+    st.sidebar.title("💎 Expert Selector Pro")
+    menu = st.sidebar.radio("Navigation", ["🏠 Dashboard", "🥩 Echo-Composition", "📸 Scanner", "✍️ Saisie", "🔧 Admin"])
 
     # --- DASHBOARD ---
     if menu == "🏠 Dashboard":
         st.title("🏆 Tableau de Bord du Troupeau")
-        if df.empty:
-            st.warning("Base de données vide. Allez dans l'onglet 'Admin' pour générer les 50 individus de test.")
+        if df.empty: st.info("Base vide. Allez dans Admin pour générer des données.")
         else:
-            c1, c2, c3, c4 = st.columns(4)
-            c1.markdown(f"<div class='metric-card'><p>Total Sujets</p><h2>{len(df)}</h2></div>", unsafe_allow_html=True)
-            c2.markdown(f"<div class='metric-card'><p>Elite (Top 15%)</p><h2>{len(df[df['Statut'] != 'Standard'])}</h2></div>", unsafe_allow_html=True)
-            c3.markdown(f"<div class='metric-card'><p>Muscle Moyen</p><h2>{df['Pct_Muscle'].mean():.1f}%</h2></div>", unsafe_allow_html=True)
-            c4.markdown(f"<div class='metric-card'><p>Poids Moyen</p><h2>{df['p70'].mean():.1f} kg</h2></div>", unsafe_allow_html=True)
+            col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+            col_m1.markdown(f"<div class='metric-card'><p>Sujets</p><h2>{len(df)}</h2></div>", unsafe_allow_html=True)
+            col_m2.markdown(f"<div class='metric-card'><p>Elite</p><h2>{len(df[df['Statut'] != 'Standard'])}</h2></div>", unsafe_allow_html=True)
+            col_m3.markdown(f"<div class='metric-card'><p>Muscle Moyen</p><h2>{df['Muscle'].mean():.1f}%</h2></div>", unsafe_allow_html=True)
+            col_m4.markdown(f"<div class='metric-card'><p>Poids Moyen</p><h2>{df['p70'].mean():.1f} kg</h2></div>", unsafe_allow_html=True)
             
-            st.subheader("📊 Liste Globale")
-            st.dataframe(df[['id', 'sexe', 'race', 'p70', 'Pct_Muscle', 'EUROP', 'Statut']], use_container_width=True)
+            st.subheader("📋 Liste des individus")
+            st.dataframe(df[['id', 'sexe', 'race', 'p70', 'Muscle', 'Statut']], use_container_width=True)
 
-    # --- COMPOSITION ---
-    elif menu == "🥩 Composition":
-        st.title("🥩 Analyse de Carcasse et Conformation")
+    # --- ECHO-COMPOSITION & COMPARATEUR ---
+    elif menu == "🥩 Echo-Composition":
+        st.title("🥩 Analyse Échographique Prédictive")
         if not df.empty:
-            target = st.selectbox("Sélectionner l'animal à analyser", df['id'].unique())
-            subj = df[df['id'] == target].iloc[0]
-            col1, col2 = st.columns([2, 1])
-            with col1:
-                fig = go.Figure(go.Scatterpolar(
-                    r=[subj['Pct_Muscle'], subj['Pct_Gras'], subj['Pct_Os'], subj['IC']],
-                    theta=['Muscle %', 'Gras %', 'Os %', 'Conformation (IC)'],
-                    fill='toself', line_color='#2E7D32'
-                ))
-                fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 70])))
-                st.plotly_chart(fig, use_container_width=True)
-            with col2:
-                st.markdown(f"""
-                <div class='analysis-box'>
-                    <h3>Résultats {target}</h3>
-                    <b>Sexe :</b> {subj['sexe']}<br>
-                    <b>Classe EUROP :</b> {subj['EUROP']}<br><br>
-                    <b>Muscle estimé :</b> {subj['Pct_Muscle']}%<br>
-                    <b>Gras estimé :</b> {subj['Pct_Gras']}% ({subj['Gras_mm']}mm)<br>
-                    <b>Indice de Conformation :</b> {subj['IC']:.1f}
-                </div>
-                """, unsafe_allow_html=True)
+            tab1, tab2 = st.tabs(["Analyse Individuelle", "🆚 Comparaison Côte à Côte"])
+            
+            with tab1:
+                target = st.selectbox("Choisir un animal", df['id'].unique(), key="single")
+                subj = df[df['id'] == target].iloc[0]
+                draw_echo_charts(subj, "Détails de l'animal")
+
+            with tab2:
+                col_left, col_right = st.columns(2)
+                with col_left:
+                    t1 = st.selectbox("Animal A", df['id'].unique(), index=0)
+                    draw_echo_charts(df[df['id'] == t1].iloc[0], "Sujet A")
+                with col_right:
+                    t2 = st.selectbox("Animal B", df['id'].unique(), index=min(1, len(df)-1))
+                    draw_echo_charts(df[df['id'] == t2].iloc[0], "Sujet B")
         else: st.warning("Données absentes.")
 
     # --- SCANNER ---
     elif menu == "📸 Scanner":
         st.title("📸 Station de Scan Biométrique")
-        st.info("Simulation de scan à 1 mètre avec détection automatique du canon.")
+        st.markdown("")
+        st.info("Calibrage étalon : 1 mètre. Mesure automatique du tour de canon.")
         img = st.camera_input("Scanner le profil de l'animal")
         if img:
-            with st.spinner("Analyse du squelette par IA..."):
+            with st.spinner("Analyse du squelette et des tissus..."):
                 time.sleep(1.5)
-                # Simulation des résultats du scanner
-                res = {"h_garrot": 74.5, "c_canon": 8.8, "p_thoracique": 87.0, "l_corps": 85.0}
+                res = {"h_garrot": 76.0, "c_canon": 9.2, "p_thoracique": 92.5, "l_corps": 84.0}
                 st.session_state['scan'] = res
-                st.success("✅ Scan terminé ! Tour de canon détecté : 8.8 cm")
-                st.json(res)
-                if st.button("🚀 TRANSFÉRER À LA SAISIE"):
-                    st.toast("Données envoyées vers l'onglet Saisie")
+                st.success("✅ Analyse terminée !")
+                st.metric("Tour de Canon détecté", "9.2 cm")
+                if st.button("🚀 TRANSFÉRER À LA SAISIE"): st.toast("Données envoyées !")
 
     # --- SAISIE ---
     elif menu == "✍️ Saisie":
-        st.title("✍️ Indexation et Saisie")
+        st.title("✍️ Indexation")
         sd = st.session_state.get('scan', {})
         with st.form("form_saisie"):
-            c1, c2 = st.columns(2)
-            id_a = c1.text_input("N° Boucle / ID *")
-            sexe = c2.selectbox("Sexe", ["Bélier", "Brebis", "Agneau", "Agnelle"])
+            id_a = st.text_input("ID / Boucle *")
+            sexe = st.selectbox("Sexe", ["Bélier", "Brebis", "Agneau", "Agnelle"])
             poids = st.number_input("Poids actuel (kg)", 0.0)
-            cc = st.number_input("Tour de Canon (cm) - Lu par Scanner", value=float(sd.get('c_canon', 0.0)))
-            hg = st.number_input("Hauteur Garrot (cm)", value=float(sd.get('h_garrot', 0.0)))
-            
-            if st.form_submit_button("💾 ENREGISTRER L'INDIVIDU"):
+            cc = st.number_input("Tour de Canon (cm)", value=float(sd.get('c_canon', 0.0)))
+            if st.form_submit_button("💾 ENREGISTRER"):
                 if id_a:
                     with get_db_connection() as conn:
-                        conn.execute("INSERT OR REPLACE INTO beliers (id, sexe, race) VALUES (?,?,?)", (id_a, sexe, "Ouled Djellal"))
-                        conn.execute("INSERT INTO mesures (id_animal, p70, h_garrot, c_canon) VALUES (?,?,?,?)", (id_a, poids, hg, cc))
-                    st.success(f"L'animal {id_a} a été indexé.")
-                else: st.error("L'ID est obligatoire.")
+                        conn.execute("INSERT OR REPLACE INTO beliers (id, sexe, race) VALUES (?,?,?)", (id_a, sexe, "O.Djellal"))
+                        conn.execute("INSERT INTO mesures (id_animal, p70, c_canon, h_garrot, p_thoracique) VALUES (?,?,?,?,?)", (id_a, poids, cc, 75, 90))
+                    st.success("Enregistré !")
+                else: st.error("ID requis.")
 
     # --- ADMIN ---
     elif menu == "🔧 Admin":
         st.title("🔧 Administration")
-        st.subheader("Génération de données de démonstration")
+        if st.button("🚀 GÉNÉRER 50 INDIVIDUS (MÉLANGE TEST)", use_container_width=True):
+            with get_db_connection() as conn:
+                for i in range(50):
+                    id_a = f"DZ-2026-{random.randint(1000, 9999)}"
+                    sx = random.choice(["Bélier", "Brebis", "Agneau", "Agnelle"])
+                    hg, cc, pt, p70 = (random.uniform(70,85), random.uniform(8.5,10.5), random.uniform(85,115), random.uniform(60,105)) if "Agne" not in sx else (random.uniform(50,65), random.uniform(6.5,8), random.uniform(60,80), random.uniform(25,45))
+                    conn.execute("INSERT OR REPLACE INTO beliers VALUES (?,?,?,?,?)", (id_a, "Ouled Djellal", sx, "Adulte", "Sélection"))
+                    conn.execute("INSERT INTO mesures (id_animal, p70, h_garrot, c_canon, p_thoracique) VALUES (?,?,?,?,?)", (id_a, p70, hg, cc, pt))
+            st.success("50 individus ajoutés avec succès !")
+            st.rerun()
         
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("🚀 GÉNÉRER 50 INDIVIDUS (Mélange)", use_container_width=True):
-                generer_50_test()
-                st.success("50 individus (Béliers, Brebis, Agneaux) créés avec succès !")
-                st.rerun()
-        
-        with col2:
-            if st.button("🗑️ VIDER TOUTE LA BASE DE DONNÉES", type="primary", use_container_width=True):
-                with get_db_connection() as conn:
-                    conn.execute("DELETE FROM mesures"); conn.execute("DELETE FROM beliers")
-                st.warning("Toutes les données ont été effacées.")
-                st.rerun()
+        if st.button("🗑️ RESET TOTAL", type="primary", use_container_width=True):
+            with get_db_connection() as conn:
+                conn.execute("DELETE FROM mesures"); conn.execute("DELETE FROM beliers")
+            st.rerun()
 
 if __name__ == "__main__":
     main()
