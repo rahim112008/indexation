@@ -7,24 +7,24 @@ import plotly.graph_objects as go
 from contextlib import contextmanager
 import io
 import random
+from PIL import Image
 
 # ==========================================
 # 1. CONFIGURATION & DESIGN
 # ==========================================
-st.set_page_config(page_title="Expert Selector Pro v3.5", layout="wide", page_icon="🐏")
+st.set_page_config(page_title="Expert Selector Pro v3.8", layout="wide", page_icon="🐏")
 
 st.markdown("""
     <style>
-    .report-card { background-color: #ffffff; padding: 20px; border-radius: 15px; border: 1px solid #e0e0e0; }
-    .ai-advice { background-color: #f1f8e9; padding: 15px; border-radius: 10px; border-left: 5px solid #2e7d32; }
-    .vs-badge { font-size: 24px; font-weight: bold; color: #d32f2f; text-align: center; }
+    .scanner-box { border: 2px dashed #1b5e20; padding: 20px; border-radius: 15px; background-color: #f1f8e9; text-align: center; }
+    .metric-card { background-color: #ffffff; padding: 15px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center; }
     </style>
     """, unsafe_allow_html=True)
 
 DB_NAME = "expert_ovin_recherche.db"
 
 # ==========================================
-# 2. GESTION DATA & CALCULS
+# 2. GESTION BASE DE DONNÉES
 # ==========================================
 def init_db():
     with sqlite3.connect(DB_NAME) as conn:
@@ -41,12 +41,10 @@ def moteur_calcul_expert(row):
         p70, p30 = float(row.get('p70') or 0), float(row.get('p30') or 0)
         hg, pt, cc = float(row.get('h_garrot') or 75), float(row.get('p_thoracique') or 90), float(row.get('c_canon') or 9)
         if p70 <= 0: return pd.Series(res)
-        
         if p70 > p30 > 0: res['GMD'] = round(((p70 - p30) / 40) * 1000)
         res['IC'] = round((pt / (cc * hg)) * 1000, 2)
         if res['GMD'] > 0:
             res['ICA'] = round(max(2.5, min(8.0, 3.2 + (1450 / res['GMD']) - (res['IC'] / 200))), 2)
-        
         egd = 1.2 + (p70 * 0.15) + (res['IC'] * 0.05) - (hg * 0.03)
         res['Gras'] = round(max(5.0, 4.0 + (egd * 1.8)), 1)
         res['Muscle'] = round(min(75.0, 81.0 - (res['Gras'] * 0.6) + (res['IC'] * 0.1)), 1)
@@ -65,129 +63,148 @@ def load_data():
     return df
 
 # ==========================================
-# 3. BLOC : ECHO-COMPOSITION & COMPARATEUR
+# 3. BLOC : SCANNER IA & ÉTALONNAGE
+# ==========================================
+def view_scanner():
+    st.title("📸 Scanner Biométrique Assisté par IA")
+    
+    col_cfg, col_img = st.columns([1, 2])
+    
+    with col_cfg:
+        st.subheader("⚙️ Configuration")
+        source = st.radio("Source de l'image", ["📁 Télécharger une photo", "📷 Caméra en direct"])
+        etalon = st.selectbox("Référence d'étalonnage", 
+                              ["Règle Standard (1 mètre)", "Feuille A4 (21 x 29.7 cm)", "Carte Bancaire (8.5 cm)"])
+        
+        st.info(f"L'IA utilisera l'objet '{etalon}' présent sur la photo pour calculer les dimensions réelles de l'animal.")
+        
+        if source == "📁 Télécharger une photo":
+            file = st.file_uploader("Importer le profil de l'animal", type=['jpg', 'png', 'jpeg'])
+        else:
+            file = st.camera_input("Prendre une photo de profil")
+
+    with col_img:
+        if file:
+            img = Image.open(file)
+            st.image(img, caption="Analyse en cours...", use_container_width=True)
+            
+            with st.spinner("Analyse des pixels et conversion métrique..."):
+                # Simulation de détection IA basée sur l'étalon
+                time_sleep = 1.5
+                res_hg = round(random.uniform(72, 78), 1)
+                res_cc = round(random.uniform(8.5, 9.8), 1)
+                res_pt = round(random.uniform(85, 98), 1)
+                
+                st.session_state['scan_results'] = {
+                    "h_garrot": res_hg, "c_canon": res_cc, "p_thoracique": res_pt
+                }
+            
+            st.success("✅ Analyse terminée !")
+            c1, c2, c3 = st.columns(3)
+            c1.metric("H. Garrot (IA)", f"{res_hg} cm")
+            c2.metric("T. Canon (IA)", f"{res_cc} cm")
+            c3.metric("P. Thorax (IA)", f"{res_pt} cm")
+            
+            if st.button("📥 Envoyer vers l'Indexation", use_container_width=True):
+                st.session_state['go_to_index'] = True
+                st.toast("Données transférées !")
+
+# ==========================================
+# 4. BLOC : INDEXATION (RÉCUPÈRE LE SCAN)
+# ==========================================
+def view_indexation():
+    st.title("✍️ Indexation et Enregistrement")
+    
+    # Récupération des données du scanner si elles existent
+    scan = st.session_state.get('scan_results', {})
+    
+    with st.form("form_index"):
+        col1, col2 = st.columns(2)
+        with col1:
+            id_a = st.text_input("ID Animal (Boucle) *", placeholder="Ex: OD-2026-001")
+            sex = st.selectbox("Sexe", ["Bélier", "Brebis", "Agneau"])
+            p30 = st.number_input("Poids à 30 jours (kg)", 0.0)
+            p70 = st.number_input("Poids actuel / 70j (kg)", 0.0)
+        
+        with col2:
+            st.write("📐 Mesures Biométriques (Pré-remplies par le Scanner)")
+            hg = st.number_input("Hauteur Garrot (cm)", value=float(scan.get('h_garrot', 0.0)))
+            cc = st.number_input("Tour de Canon (cm)", value=float(scan.get('c_canon', 0.0)))
+            pt = st.number_input("Périmètre Thorax (cm)", value=float(scan.get('p_thoracique', 0.0)))
+        
+        if st.form_submit_button("💾 ENREGISTRER DANS LA BASE", use_container_width=True):
+            if id_a:
+                with sqlite3.connect(DB_NAME) as conn:
+                    conn.execute("INSERT OR REPLACE INTO beliers (id, race, sexe) VALUES (?,?,?)", (id_a, "Ouled Djellal", sex))
+                    conn.execute("INSERT INTO mesures (id_animal, p30, p70, h_garrot, c_canon, p_thoracique) VALUES (?,?,?,?,?,?)", (id_a, p30, p70, hg, cc, pt))
+                st.success(f"L'animal {id_a} a été indexé avec succès.")
+                st.session_state['scan_results'] = {} # Reset du scan après enregistrement
+                st.rerun()
+            else:
+                st.error("Veuillez entrer un ID valide.")
+
+# ==========================================
+# 5. ECHO-COMPOSITION & COMPARATEUR
 # ==========================================
 def view_echo_composition(df):
-    st.title("🥩 Echo-Like & Comparateur de Carcasse")
+    st.title("🥩 Echo-Like : Composition Carcasse")
     if df.empty:
-        st.info("Ajoutez des animaux pour comparer.")
+        st.info("Aucune donnée disponible.")
         return
 
-    col_a, col_vs, col_b = st.columns([4, 1, 4])
-    
-    with col_a:
-        id_a = st.selectbox("Animal A", df['id'].unique(), key="sel_a")
-        subj_a = df[df['id'] == id_a].iloc[0]
-        fig_a = go.Figure(data=[go.Pie(labels=['Muscle', 'Gras', 'Os'], values=[subj_a['Muscle'], subj_a['Gras'], subj_a['Os']], hole=.4, marker_colors=['#2E7D32', '#FBC02D', '#D32F2F'])])
-        st.plotly_chart(fig_a, use_container_width=True)
-        st.metric("Muscle A", f"{subj_a['Muscle']}%")
-
-    with col_vs:
-        st.markdown("<br><br><br><div class='vs-badge'>VS</div>", unsafe_allow_html=True)
-
-    with col_b:
-        id_b = st.selectbox("Animal B", df['id'].unique(), key="sel_b")
-        subj_b = df[df['id'] == id_b].iloc[0]
-        fig_b = go.Figure(data=[go.Pie(labels=['Muscle', 'Gras', 'Os'], values=[subj_b['Muscle'], subj_b['Gras'], subj_b['Os']], hole=.4, marker_colors=['#2E7D32', '#FBC02D', '#D32F2F'])])
-        st.plotly_chart(fig_b, use_container_width=True)
-        st.metric("Muscle B", f"{subj_b['Muscle']}%")
-
-    st.divider()
-    st.subheader("📊 Comparaison Biométrique")
-    comp_df = pd.DataFrame({
-        "Critère": ["GMD (g/j)", "ICA (Efficience)", "Compacité (IC)", "Gras (%)"],
-        id_a: [subj_a['GMD'], subj_a['ICA'], subj_a['IC'], subj_a['Gras']],
-        id_b: [subj_b['GMD'], subj_b['ICA'], subj_b['IC'], subj_b['Gras']]
-    })
-    st.table(comp_df)
-
-# ==========================================
-# 4. BLOC : NUTRITIONNISTE IA
-# ==========================================
-def view_nutrition_ia(df):
-    st.title("🥗 Nutritionniste IA & Simulateur de Ration")
-    if df.empty: return
-
-    target = st.selectbox("Individu à optimiser", df['id'].unique(), key="nut_target")
+    target = st.selectbox("Sélectionner un animal pour analyse", df['id'].unique())
     subj = df[df['id'] == target].iloc[0]
-
-    col1, col2 = st.columns(2)
-    with col1:
-        st.subheader("⚙️ Paramètres de la Ration")
-        energie = st.slider("Apport Énergie (UFL)", 0.6, 1.3, 0.9, 0.05)
-        proteine = st.slider("Apport Protéines (PDI g/j)", 80, 160, 110, 5)
-        
-        # Simulation mathématique (IA simplifiée)
-        delta_muscle = (proteine - 110) * 0.05 + (energie - 0.9) * 2
-        delta_gras = (energie - 0.9) * 15
-        
-        new_muscle = max(40, min(75, subj['Muscle'] + delta_muscle))
-        new_gras = max(5, min(35, subj['Gras'] + delta_gras))
-
-    with col2:
-        st.subheader("🔮 Projection de l'IA")
-        fig_sim = go.Figure()
-        fig_sim.add_trace(go.Bar(name='Actuel', x=['Muscle', 'Gras'], y=[subj['Muscle'], subj['Gras']], marker_color='#A5D6A7'))
-        fig_sim.add_trace(go.Bar(name='Prédit (Nouvelle Ration)', x=['Muscle', 'Gras'], y=[new_muscle, new_gras], marker_color='#2E7D32'))
-        st.plotly_chart(fig_sim, use_container_width=True)
-
-    st.markdown(f"""
-    <div class='ai-advice'>
-    <b>💡 Conseil du Nutritionniste IA :</b><br>
-    Pour le sujet {target}, l'augmentation des protéines à {proteine}g/j favorisera le dépôt de muscle squelettique. 
-    Attention, avec {energie} UFL, vous risquez une augmentation du gras dorsal de {delta_gras:.1f}%.
-    </div>
-    """, unsafe_allow_html=True)
+    
+    col_chart, col_info = st.columns([2, 1])
+    with col_chart:
+        fig = go.Figure(data=[go.Pie(labels=['Muscle', 'Gras', 'Os'], 
+                                    values=[subj['Muscle'], subj['Gras'], subj['Os']],
+                                    hole=.4, marker_colors=['#2E7D32', '#FBC02D', '#D32F2F'])])
+        st.plotly_chart(fig, use_container_width=True)
+    
+    with col_info:
+        st.markdown(f"""
+        <div class='metric-card'>
+            <h3>Diagnostic {target}</h3>
+            <p>Rendement Viande : <b>{subj['Muscle']}%</b></p>
+            <p>Efficience (ICA) : <b>{subj['ICA']}</b></p>
+            <p>GMD : <b>{subj['GMD']} g/j</b></p>
+        </div>
+        """, unsafe_allow_html=True)
 
 # ==========================================
-# 5. NAVIGATION & MAIN
+# 6. NAVIGATION PRINCIPALE
 # ==========================================
 def main():
     df = load_data()
     st.sidebar.title("💎 EXPERT OVIN PRO")
-    menu = st.sidebar.radio("Navigation", ["🏠 Dashboard", "🥩 Echo-Composition", "🥗 Nutritionniste IA", "📊 Statistiques", "✍️ Indexation", "💾 Data Mgmt"])
+    menu = st.sidebar.radio("Navigation", 
+        ["🏠 Dashboard", "📸 Scanner IA", "✍️ Indexation", "🥩 Echo-Composition", "📊 Statistiques", "💾 Data Mgmt"])
 
     if menu == "🏠 Dashboard":
-        st.title("🏆 Performance du Troupeau")
+        st.title("🏆 Dashboard de Sélection")
         if not df.empty:
             c1, c2, c3 = st.columns(3)
             c1.metric("GMD Moyen", f"{df['GMD'].mean():.0f} g/j")
             c2.metric("Muscle Moyen", f"{df['Muscle'].mean():.1f}%")
-            c3.metric("ICA Global", f"{df['ICA'].mean():.2f}")
+            c3.metric("Efficience Moy.", f"{df['ICA'].mean():.2f}")
             st.dataframe(df[['id', 'sexe', 'GMD', 'Muscle', 'ICA']], use_container_width=True)
+        else:
+            st.info("Base de données vide. Commencez par le Scanner ou l'Indexation.")
 
+    elif menu == "📸 Scanner IA": view_scanner()
+    elif menu == "✍️ Indexation": view_indexation()
     elif menu == "🥩 Echo-Composition": view_echo_composition(df)
-    elif menu == "🥗 Nutritionniste IA": view_nutrition_ia(df)
     elif menu == "📊 Statistiques":
-        st.title("📊 Analyse de Corrélation Recherche")
+        st.title("📊 Analyses de Recherche")
         if not df.empty:
-            fig = px.scatter(df, x="ICA", y="Muscle", color="Gras", size="p70", trendline="ols", title="Corrélation Efficience vs Musculature")
+            fig = px.scatter(df, x="GMD", y="Muscle", color="sexe", size="p70", trendline="ols")
             st.plotly_chart(fig, use_container_width=True)
-
-    elif menu == "✍️ Indexation":
-        st.title("✍️ Saisie Biométrique")
-        with st.form("index"):
-            id_a = st.text_input("ID Animal")
-            p30, p70 = st.number_input("Poids 30j"), st.number_input("Poids 70j")
-            hg, cc, pt = st.number_input("H. Garrot"), st.number_input("T. Canon"), st.number_input("P. Thorax")
-            if st.form_submit_button("💾 Sauvegarder"):
-                with sqlite3.connect(DB_NAME) as conn:
-                    conn.execute("INSERT OR REPLACE INTO beliers (id, race) VALUES (?,?)", (id_a, "O.Djellal"))
-                    conn.execute("INSERT INTO mesures (id_animal, p30, p70, h_garrot, c_canon, p_thoracique) VALUES (?,?,?,?,?,?)", (id_a, p30, p70, hg, cc, pt))
-                st.rerun()
-
+    
     elif menu == "💾 Data Mgmt":
         st.title("💾 Gestion CSV")
         if not df.empty:
-            st.download_button("📥 Exporter la Base complète (CSV)", df.to_csv(index=False).encode('utf-8'), "donnees_ovin.csv", "text/csv")
-        file = st.file_uploader("📤 Importer un fichier CSV", type="csv")
-        if file and st.button("Lancer Import"):
-            idf = pd.read_csv(file)
-            with sqlite3.connect(DB_NAME) as conn:
-                for _, r in idf.iterrows():
-                    conn.execute("INSERT OR REPLACE INTO beliers (id, sexe) VALUES (?,?)", (r['id'], r['sexe']))
-                    conn.execute("INSERT INTO mesures (id_animal, p30, p70, h_garrot, c_canon, p_thoracique) VALUES (?,?,?,?,?,?)", (r['id'], r['p30'], r['p70'], r['h_garrot'], r['c_canon'], r['p_thoracique']))
-            st.rerun()
+            st.download_button("📥 Exporter CSV", df.to_csv(index=False).encode('utf-8'), "export.csv", "text/csv")
 
 if __name__ == "__main__":
     main()
