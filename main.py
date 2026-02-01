@@ -58,14 +58,19 @@ def seed_data():
                              VALUES (?,?,?,?,?,?,?,?,?)""", mesures)
 
 # ==========================================
-# BLOC 2 : MOTEUR DE CALCULS EXPERTS
+# BLOC 2 : MOTEUR DE CALCULS EXPERTS (CORRIGÉ & DIFFÉRENCIÉ)
 # ==========================================
 def moteur_calcul_expert(row):
+    """
+    Moteur V21 : Intègre le dimorphisme sexuel et sécurise le calcul des tissus.
+    """
     res = {'Muscle': 0.0, 'Gras': 0.0, 'Os': 0.0, 'GMD': 0, 'Volume': 0.0, 'Rendement': 0.0, 'SNC': 0.0, 'jours_depuis_pesee': 0}
     try:
+        # Extraction des données de base
         p_act, p_bas = float(row.get('p_actuel') or 0), float(row.get('p_base') or 0)
         hg, lg, pt = float(row.get('h_garrot') or 0), float(row.get('l_corps') or 0), float(row.get('p_thoracique') or 0)
         cc, bas = float(row.get('c_canon') or 0), float(row.get('bassin') or 0)
+        sexe = row.get('sexe', 'Bélier') # Récupéré via la jointure dans load_data()
         
         # Calcul de l'ancienneté de la pesée
         if row['date_mesure']:
@@ -79,24 +84,50 @@ def moteur_calcul_expert(row):
         densite_volumique = res['Volume'] / lg if lg > 0 else 0
         res['SNC'] = round((densite_volumique * 0.015) + (bas * 0.4), 2)
         
-        # Carcasse
+        # --- CALCUL CARCASSE AVANCÉ ---
         ic = (pt / (cc * hg)) * 1000 if cc > 0 else 0
-        res['Gras'] = round(max(5.0, 4.0 + ((1.2 + p_act*0.15 + ic*0.05 - hg*0.03) * 1.8)), 1)
-        res['Muscle'] = round(min(75.0, 81.0 - (res['Gras'] * 0.6) + (ic * 0.1)), 1)
-        res['Os'] = round(100 - res['Muscle'] - res['Gras'], 1)
+        
+        # Ajustement selon le sexe (La brebis engraisse plus vite, le bélier est plus musclé)
+        coeff_gras = 1.18 if sexe in ["Brebis", "Agnelle"] else 1.0
+        coeff_musc = 0.90 if sexe in ["Brebis", "Agnelle"] else 1.05
+
+        # 1. Estimation du Gras (Cible 8-32%)
+        gras_est = (4.0 + ((1.2 + p_act*0.15 + ic*0.05 - hg*0.03) * 1.8)) * coeff_gras
+        res['Gras'] = round(np.clip(gras_est, 8.0, 32.0), 1)
+        
+        # 2. Estimation du Muscle (Cible 40-75%)
+        muscle_est = (81.0 - (res['Gras'] * 0.6) + (ic * 0.1)) * coeff_musc
+        res['Muscle'] = round(np.clip(muscle_est, 40.0, 75.0), 1)
+        
+        # 3. Sécurité biologique de l'Os (Minimum vital)
+        # Empêche l'os d'être écrasé par un muscle ou gras trop élevé
+        min_os = 11.0 if sexe in ["Brebis", "Agnelle"] else 13.5
+        total_mg = res['Muscle'] + res['Gras']
+        
+        if total_mg > (100.0 - min_os):
+            correction = (100.0 - min_os) / total_mg
+            res['Muscle'] = round(res['Muscle'] * correction, 1)
+            res['Gras'] = round(res['Gras'] * correction, 1)
+        
+        # Calcul final de l'Os et Rendement
+        res['Os'] = round(100.0 - res['Muscle'] - res['Gras'], 1)
         res['Rendement'] = round(42 + (res['Muscle'] * 0.12), 1)
+        
         return pd.Series(res)
-    except: return pd.Series(res)
+    except: 
+        return pd.Series(res)
 
 def load_data():
     init_db()
     with get_db_connection() as conn:
+        # La jointure SELECT b.* permet de récupérer la colonne 'sexe' pour le moteur
         query = """SELECT b.*, m.p_base, m.p_actuel, m.h_garrot, m.l_corps, m.p_thoracique, m.c_canon, m.bassin, m.date_mesure 
                    FROM beliers b 
                    LEFT JOIN (SELECT id_animal, MAX(id) as last_id FROM mesures GROUP BY id_animal) last_m ON b.id = last_m.id_animal 
                    LEFT JOIN mesures m ON last_m.last_id = m.id"""
         df = pd.read_sql(query, conn)
     if not df.empty:
+        # Application du moteur sur chaque ligne
         df_calc = df.apply(moteur_calcul_expert, axis=1)
         df = pd.concat([df, df_calc], axis=1).drop_duplicates(subset=['id'])
     return df
