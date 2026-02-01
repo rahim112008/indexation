@@ -171,6 +171,90 @@ def view_indexation():
 # ==========================================
 # 4. DASHBOARD & ANALYSE
 # ==========================================
+# ==========================================
+# 3. DASHBOARD & RAPPELS (BLOC COMPLET V14)
+# ==========================================
+def view_dashboard(df):
+    st.title("🏠 Dashboard & Planification")
+    if df.empty:
+        st.info("Aucune donnée disponible. Veuillez enregistrer un animal.")
+        return
+
+    # --- SECTION ALERTES ---
+    st.subheader("🔔 Alertes de Suivi Immédiates")
+    # Alerte si la dernière pesée date de plus de 30 jours (pour TOUS les animaux)
+    alerte_orange = df[(df['jours_depuis_pesee'] >= 30) & (df['jours_depuis_pesee'] < 45)]
+    alerte_rouge = df[df['jours_depuis_pesee'] >= 45]
+
+    if not alerte_rouge.empty or not alerte_orange.empty:
+        c1, c2 = st.columns(2)
+        with c1:
+            for _, r in alerte_rouge.iterrows():
+                st.error(f"🚨 **ID {r['id']}** : Retard critique ! (+{r['jours_depuis_pesee']}j)")
+        with c2:
+            for _, r in alerte_orange.iterrows():
+                st.warning(f"⚖️ **ID {r['id']}** : Pesée à prévoir ({r['jours_depuis_pesee']}j)")
+    
+    st.markdown("---")
+
+    # --- SECTION CALENDRIER PRÉVISIONNEL ---
+    st.subheader("📅 Prochaines Pesées Planifiées")
+    
+    rappels = []
+    today = datetime.now().date()
+
+    for _, row in df.iterrows():
+        # CAS 1 : ANIMAUX NÉS À LA FERME (Pesées par étapes d'âge)
+        if row['source'] == "Né à la ferme":
+            date_naiss = datetime.strptime(row['date_entree'], '%Y-%m-%d').date()
+            etapes = [("P10 (10j)", 10), ("P30 (Sevrage)", 30), ("P70 (Croissance)", 70), ("P90", 90)]
+            
+            for nom, jours in etapes:
+                date_cible = date_naiss + timedelta(days=jours)
+                jours_restants = (date_cible - today).days
+                if -2 <= jours_restants <= 15: # On affiche si c'est prévu dans les 15 prochains jours
+                    rappels.append({
+                        "ID": row['id'],
+                        "Type": "🍼 Étape Croissance",
+                        "Détail": nom,
+                        "Date Prévue": date_cible,
+                        "Jours Restants": jours_restants
+                    })
+
+        # CAS 2 : ANIMAUX ACHETÉS (Pesées cycliques tous les 30 jours)
+        else:
+            last_pesee = datetime.strptime(row['date_mesure'], '%Y-%m-%d').date()
+            # On prévoit la prochaine pesée 30 jours après la dernière enregistrée
+            date_prochaine = last_pesee + timedelta(days=30)
+            jours_restants = (date_prochaine - today).days
+            
+            if jours_restants <= 15: # On affiche si c'est prévu bientôt
+                rappels.append({
+                    "ID": row['id'],
+                    "Type": "🛒 Suivi Achat",
+                    "Détail": "Contrôle Mensuel",
+                    "Date Prévue": date_prochaine,
+                    "Jours Restants": jours_restants
+                })
+
+    if rappels:
+        plan_df = pd.DataFrame(rappels).sort_values("Date Prévue")
+        
+        # Affichage avec style
+        def style_column(row):
+            if row['Jours Restants'] <= 2: return ['background-color: #ff4b4b']*5
+            elif row['Jours Restants'] <= 7: return ['background-color: #ffa500']*5
+            return ['']*5
+
+        st.table(plan_df)
+    else:
+        st.success("✅ Aucune pesée spécifique n'est prévue pour les 15 prochains jours.")
+
+    st.markdown("---")
+    
+    # --- SECTION INVENTAIRE ---
+    st.subheader("📊 Performance de l'Exploitation")
+    st.dataframe(df[['id', 'sexe', 'source', 'GMD', 'SNC', 'Rendement']], use_container_width=True)
 def view_dashboard(df):
     st.title("🏠 Dashboard de l'Exploitation")
     if df.empty: return
