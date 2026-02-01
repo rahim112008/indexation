@@ -270,8 +270,105 @@ def moteur_calcul_expert(row):
         res['Rendement'] = round(42 + (res['Muscle'] * 0.12), 1)
         return pd.Series(res)
     except: return pd.Series(res)
+
 # ==========================================
-# BLOC 6 : NUTRITIONNISTE EXPERT & GÉNÉRATEUR DE RECETTES
+# 6. BLOC EXPERTISE ANALYTIQUE (V15 - AMÉLIORÉ)
+# ==========================================
+def view_echo(df):
+    st.title("🥩 Expertise Analytique de la Carcasse")
+    
+    if df is None or df.empty:
+        st.warning("⚠️ Aucune donnée disponible. Veuillez d'abord indexer des animaux.")
+        return
+
+    # Sélection de l'animal avec rappel de sa catégorie
+    options = {f"{row['id']} ({row['sexe']})": row['id'] for _, row in df.iterrows()}
+    target_label = st.selectbox("🎯 Sujet pour analyse de boucherie", options.keys())
+    target_id = options[target_label]
+    sub = df[df['id'] == target_id].iloc[0]
+
+    # --- EN-TÊTE DE PERFORMANCE ---
+    col_a, col_b, col_c, col_d = st.columns(4)
+    with col_a:
+        st.metric("Poids Vif", f"{sub['p_actuel']} kg")
+    with col_b:
+        compacite = round(sub['p_actuel'] / sub['h_garrot'], 2) if sub['h_garrot'] > 0 else 0
+        st.metric("Indice Compacité", f"{compacite}", help="Poids par cm de hauteur. Plus il est haut, plus l'animal est 'épais'.")
+    with col_c:
+        st.metric("Rendement Carcasse", f"{sub['Rendement']}%")
+    with col_d:
+        # Calcul du SNC (Surface de la Noix de Côtelette)
+        st.metric("SNC (Muscularité)", f"{sub['SNC']} cm²")
+
+    st.markdown("---")
+
+    # --- RÉPARTITION TISSULAIRE (KG & %) ---
+    st.subheader("📊 Composition Tissulaire Estimée (Masse Réelle)")
+    
+    # Calcul des masses en kg basées sur le poids actuel
+    m_muscle = round((sub['p_actuel'] * sub['Muscle']) / 100, 2)
+    m_gras = round((sub['p_actuel'] * sub['Gras']) / 100, 2)
+    m_os = round((sub['p_actuel'] * sub['Os']) / 100, 2)
+
+    m1, m2, m3 = st.columns(3)
+    with m1:
+        st.markdown(f"### 🟢 Muscle\n## {m_muscle} kg")
+        st.progress(sub['Muscle'] / 100)
+        st.caption(f"Soit {sub['Muscle']}% de la masse totale")
+    
+    with m2:
+        st.markdown(f"### 🟡 Gras\n## {m_gras} kg")
+        st.progress(sub['Gras'] / 100)
+        st.caption(f"Soit {sub['Gras']}% (État d'engraissement)")
+        
+    with m3:
+        st.markdown(f"### 🔴 Os\n## {m_os} kg")
+        st.progress(sub['Os'] / 100)
+        st.caption(f"Soit {sub['Os']}% (Squelette)")
+
+    # --- VISUALISATION GRAPHIQUE ---
+    g1, g2 = st.columns(2)
+    with g1:
+        fig_pie = go.Figure(data=[go.Pie(
+            labels=['Muscle', 'Gras', 'Os'],
+            values=[m_muscle, m_gras, m_os],
+            hole=.5,
+            marker_colors=['#2E7D32', '#FBC02D', '#D32F2F']
+        )])
+        fig_pie.update_layout(title="Répartition des Tissus", height=350)
+        st.plotly_chart(fig_pie, use_container_width=True)
+
+    with g2:
+        # Échelle de classement de la conformation (Inspiré EUROP)
+        ratio_mo = round(sub['Muscle'] / sub['Os'], 2) if sub['Os'] > 0 else 0
+        
+        st.write("### 🏆 Score de Conformation")
+        if ratio_mo > 3.5:
+            score, label, color = 5, "Classe S (Supérieur)", "gold"
+        elif ratio_mo > 3.0:
+            score, label, color = 4, "Classe E (Excellent)", "green"
+        elif ratio_mo > 2.5:
+            score, label, color = 3, "Classe U (Très Bon)", "blue"
+        else:
+            score, label, color = 2, "Classe R (Standard)", "orange"
+
+        st.subheader(label)
+        st.write(f"🧬 **Ratio Muscle/Os :** {ratio_mo}")
+        st.info(f"Note technique : Cet individu présente un développement musculaire {label.lower()} par rapport au standard de la race.")
+
+    # --- SECTION VALEUR COMMERCIALE ---
+    st.markdown("---")
+    st.subheader("💰 Estimation de Valeur Marchande (Boucherie)")
+    prix_kg = st.number_input("Prix du kg de carcasse (DA)", value=1800, step=50)
+    poids_carcasse = (sub['p_actuel'] * sub['Rendement']) / 100
+    valeur_estimee = poids_carcasse * prix_kg
+    
+    ve1, ve2 = st.columns(2)
+    ve1.metric("Poids Carcasse (froid)", f"{round(poids_carcasse, 2)} kg")
+    ve2.metric("Valeur Estimée", f"{int(valeur_estimee)} DA")
+
+# ==========================================
+# BLOC 7 : NUTRITIONNISTE EXPERT & GÉNÉRATEUR DE RECETTES
 # ==========================================
 
 def view_nutrition(df):
