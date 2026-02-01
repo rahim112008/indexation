@@ -170,41 +170,81 @@ def view_scanner():
                 st.session_state['last_scan'] = {"h_garrot": 76.0, "l_corps": 84.0, "p_thoracique": 90.0, "c_canon": 9.0, "bassin": 22.5}
 
 # ==========================================
-# BLOC 5 : INDEXATION (ENREGISTREMENT)
+# 5. INDEXATION & MORPHOMÉTRIE (VERSION DYNAMIQUE)
 # ==========================================
 def view_indexation():
-    st.title("✍️ Nouvel Enregistrement")
+    st.title("✍️ Indexation & Volume")
     scan = st.session_state.get('last_scan', {})
-    src = st.radio("Origine", ["Né à la ferme", "Acheté à l'extérieur"], horizontal=True)
     
-    with st.form("idx_form"):
-        id_a = st.text_input("ID Boucle *")
-        sex = st.selectbox("Sexe", ["Bélier", "Brebis", "Agneau", "Agnelle"])
+    # Choix de l'origine
+    source = st.radio("Origine de l'animal", ["Né à la ferme", "Acheté à l'extérieur"], horizontal=True)
+    
+    with st.form("form_index"):
+        c1, c2 = st.columns(2)
+        id_a = c1.text_input("ID Animal (Boucle) *")
+        sexe = c2.selectbox("Catégorie", ["Bélier", "Brebis", "Agneau", "Agnelle"])
         
-        if src == "Né à la ferme":
-            d_ref = st.date_input("Date Naissance", datetime.now())
-            p_base = st.number_input("Poids Sevrage (kg)", 15.0)
-            p_act = st.number_input("Poids Actuel (kg)", 20.0)
-            age_txt = "Né Ferme"
-        else:
-            d_ref = st.date_input("Date Achat", datetime.now())
-            p_base = st.number_input("Poids Achat (kg)", 35.0)
-            p_act = p_base
-            age_txt = "Achat"
+        st.markdown("---")
+        
+        # --- CAS 1 : NÉ À LA FERME ---
+        if source == "Né à la ferme":
+            st.subheader("🐣 Suivi de Croissance (Naissance -> 70j)")
+            col_date, col_vide = st.columns(2)
+            date_naiss = col_date.date_input("Date de Naissance", datetime.now())
+            
+            cp1, cp2, cp3, cp4 = st.columns(4)
+            p_naiss = cp1.number_input("Poids Naissance", value=4.0)
+            p_10j = cp2.number_input("Poids 10j", value=8.0)
+            p_30j = cp3.number_input("Poids 30j (Sevrage)", value=15.0)
+            p_70j = cp4.number_input("Poids 70j", value=28.0)
+            
+            # Pour la compatibilité base de données
+            p_base = p_30j
+            p_act = p_70j
+            age_info = "Né Ferme"
 
-        c1, c2, c3 = st.columns(3)
-        hg = c1.number_input("Garrot", value=float(scan.get('h_garrot', 75.0)))
-        lg = c2.number_input("Longueur", value=float(scan.get('l_corps', 85.0)))
-        pt = c3.number_input("Thorax", value=float(scan.get('p_thoracique', 90.0)))
-        
-        if st.form_submit_button("💾 Enregistrer"):
+        # --- CAS 2 : ACHETÉ À L'EXTÉRIEUR ---
+        else:
+            st.subheader("🛒 Détails de l'Achat")
+            ca1, ca2, ca3 = st.columns(3)
+            date_achat = ca1.date_input("Date d'Achat", datetime.now())
+            p_achat = ca2.number_input("Poids à l'Achat (kg)", value=35.0)
+            age_mois = ca3.number_input("Âge estimé (en mois)", min_value=1, max_value=120, value=6)
+            
+            p_base = p_achat
+            p_act = p_achat # Au jour de l'achat, le poids actuel est le poids d'achat
+            age_info = f"{age_mois} mois"
+
+        st.markdown("---")
+        st.subheader("📏 Mensurations Biométriques (cm)")
+        m1, m2, m3, m4, m5 = st.columns(5)
+        # On récupère les valeurs du scan s'il existe, sinon valeurs par défaut
+        hg = m1.number_input("Garrot", value=float(scan.get('h_garrot', 75.0)))
+        lg = m2.number_input("Longueur", value=float(scan.get('l_corps', 85.0)))
+        pt = m3.number_input("Thorax", value=float(scan.get('p_thoracique', 90.0)))
+        cc = m4.number_input("Canon", value=float(scan.get('c_canon', 9.0)))
+        bas = m5.number_input("Bassin", value=float(scan.get('bassin', 22.0)))
+
+        # Bouton d'enregistrement
+        if st.form_submit_button("💾 ENREGISTRER L'INDIVIDU"):
             if id_a:
                 with get_db_connection() as conn:
-                    conn.execute("INSERT OR REPLACE INTO beliers VALUES (?,?,?,?,?,?)", (id_a, "OD", sex, age_txt, src, d_ref))
-                    conn.execute("INSERT INTO mesures (id_animal, p_base, p_actuel, h_garrot, l_corps, p_thoracique, c_canon, bassin, date_mesure) VALUES (?,?,?,?,?,?,?,?,?)",
-                                 (id_a, p_base, p_act, hg, lg, pt, 9.0, 22.0, datetime.now().date()))
-                st.success(f"{id_a} enregistré avec succès !")
+                    # Sauvegarde profil
+                    conn.execute("INSERT OR REPLACE INTO beliers VALUES (?,?,?,?,?,?)", 
+                                 (id_a, "Ouled Djellal", sexe, age_info, source, datetime.now().date()))
+                    
+                    # Sauvegarde mesures
+                    conn.execute("""INSERT INTO mesures 
+                                 (id_animal, p_base, p_actuel, h_garrot, l_corps, p_thoracique, c_canon, bassin, date_mesure) 
+                                 VALUES (?,?,?,?,?,?,?,?,?)""",
+                                 (id_a, p_base, p_act, hg, lg, pt, cc, bas, datetime.now().date()))
+                
+                st.success(f"✅ Fiche de l'animal {id_a} créée avec succès !")
+                # Optionnel : On vide le scan après enregistrement
+                if 'last_scan' in st.session_state: del st.session_state['last_scan']
                 st.rerun()
+            else:
+                st.error("⚠️ Veuillez entrer un identifiant (Boucle).")
 
 # ==========================================
 # BLOC 6 : EXPERTISE & NUTRITION
