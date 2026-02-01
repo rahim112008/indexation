@@ -169,89 +169,53 @@ def view_indexation():
                 st.rerun()
 
 # ==========================================
-# 3. DASHBOARD & RAPPELS (BLOC COMPLET V14)
+# 4. DASHBOARD & ANALYSE
 # ==========================================
 def view_dashboard(df):
-    st.title("🏠 Dashboard & Planification")
-    if df.empty:
-        st.info("Aucune donnée disponible. Veuillez enregistrer un animal.")
-        return
-
-    # --- SECTION ALERTES ---
-    st.subheader("🔔 Alertes de Suivi Immédiates")
-    # Alerte si la dernière pesée date de plus de 30 jours (pour TOUS les animaux)
-    alerte_orange = df[(df['jours_depuis_pesee'] >= 30) & (df['jours_depuis_pesee'] < 45)]
-    alerte_rouge = df[df['jours_depuis_pesee'] >= 45]
-
-    if not alerte_rouge.empty or not alerte_orange.empty:
-        c1, c2 = st.columns(2)
-        with c1:
-            for _, r in alerte_rouge.iterrows():
-                st.error(f"🚨 **ID {r['id']}** : Retard critique ! (+{r['jours_depuis_pesee']}j)")
-        with c2:
-            for _, r in alerte_orange.iterrows():
-                st.warning(f"⚖️ **ID {r['id']}** : Pesée à prévoir ({r['jours_depuis_pesee']}j)")
+    st.title("🏠 Dashboard de l'Exploitation")
+    if df.empty: return
     
-    st.markdown("---")
-
-    # --- SECTION CALENDRIER PRÉVISIONNEL ---
-    st.subheader("📅 Prochaines Pesées Planifiées")
-    
-    rappels = []
-    today = datetime.now().date()
-
-    for _, row in df.iterrows():
-        # CAS 1 : ANIMAUX NÉS À LA FERME (Pesées par étapes d'âge)
-        if row['source'] == "Né à la ferme":
-            date_naiss = datetime.strptime(row['date_entree'], '%Y-%m-%d').date()
-            etapes = [("P10 (10j)", 10), ("P30 (Sevrage)", 30), ("P70 (Croissance)", 70), ("P90", 90)]
-            
-            for nom, jours in etapes:
-                date_cible = date_naiss + timedelta(days=jours)
-                jours_restants = (date_cible - today).days
-                if -2 <= jours_restants <= 15: # On affiche si c'est prévu dans les 15 prochains jours
-                    rappels.append({
-                        "ID": row['id'],
-                        "Type": "🍼 Étape Croissance",
-                        "Détail": nom,
-                        "Date Prévue": date_cible,
-                        "Jours Restants": jours_restants
-                    })
-
-        # CAS 2 : ANIMAUX ACHETÉS (Pesées cycliques tous les 30 jours)
-        else:
-            last_pesee = datetime.strptime(row['date_mesure'], '%Y-%m-%d').date()
-            # On prévoit la prochaine pesée 30 jours après la dernière enregistrée
-            date_prochaine = last_pesee + timedelta(days=30)
-            jours_restants = (date_prochaine - today).days
-            
-            if jours_restants <= 15: # On affiche si c'est prévu bientôt
-                rappels.append({
-                    "ID": row['id'],
-                    "Type": "🛒 Suivi Achat",
-                    "Détail": "Contrôle Mensuel",
-                    "Date Prévue": date_prochaine,
-                    "Jours Restants": jours_restants
-                })
-
-    if rappels:
-        plan_df = pd.DataFrame(rappels).sort_values("Date Prévue")
-        
-        # Affichage avec style
-        def style_column(row):
-            if row['Jours Restants'] <= 2: return ['background-color: #ff4b4b']*5
-            elif row['Jours Restants'] <= 7: return ['background-color: #ffa500']*5
-            return ['']*5
-
-        st.table(plan_df)
-    else:
-        st.success("✅ Aucune pesée spécifique n'est prévue pour les 15 prochains jours.")
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Effectif Total", len(df))
+    col2.metric("GMD Moyen", f"{int(df['GMD'].mean())} g/j")
+    col3.metric("SNC Élite", f"{df['SNC'].max():.1f} cm²")
+    col4.metric("Rendement", f"{df['Rendement'].mean():.1f}%")
 
     st.markdown("---")
-    
-    # --- SECTION INVENTAIRE ---
-    st.subheader("📊 Performance de l'Exploitation")
-    st.dataframe(df[['id', 'sexe', 'source', 'GMD', 'SNC', 'Rendement']], use_container_width=True)
+    st.subheader("🌟 Classement par Performance Musculaire (SNC)")
+    st.dataframe(df[['id', 'sexe', 'source', 'SNC', 'Muscle', 'Volume', 'GMD']].sort_values('SNC', ascending=False), use_container_width=True)
+
+def view_echo(df):
+    st.title("🥩 Expertise de la Noix de Côtelette")
+    if df.empty: return
+    target = st.selectbox("Sélectionner l'animal", df['id'].unique())
+    sub = df[df['id'] == target].iloc[0]
+
+    c1, c2 = st.columns([1, 1])
+    with c1:
+        st.metric("Surface Noix (SNC)", f"{sub['SNC']} cm²")
+        fig_gauge = go.Figure(go.Indicator(
+            mode = "gauge+number", value = sub['SNC'], title = {'text': "Indice de Muscularité"},
+            gauge = {'axis': {'range': [None, 30]}, 'steps': [
+                {'range': [0, 15], 'color': "#E8E8E8"},
+                {'range': [15, 22], 'color': "#A0A0A0"},
+                {'range': [22, 30], 'color': "#FFD700"}],
+                'threshold': {'line': {'color': "red", 'width': 4}, 'value': 22}}))
+        st.plotly_chart(fig_gauge, use_container_width=True)
+
+    with c2:
+        st.subheader("Répartition Tissulaire")
+        fig_pie = go.Figure(data=[go.Pie(labels=['Muscle', 'Gras', 'Os'], values=[sub['Muscle'], sub['Gras'], sub['Os']], hole=.4)])
+        st.plotly_chart(fig_pie, use_container_width=True)
+
+def view_nutrition(df):
+    st.title("🥗 Ration Optimisée")
+    if df.empty: return
+    target = st.selectbox("Individu", df['id'].unique())
+    sub = df[df['id'] == target].iloc[0]
+    obj = st.slider("Objectif GMD (g/j)", 100, 500, 250)
+    besoin = round((0.035 * (sub['p_actuel']**0.75)) + (obj/1000)*3.5, 2)
+    st.info(f"Besoin estimé pour {target} ({sub['p_actuel']}kg) : {besoin} UFL/jour")
 
 # ==========================================
 # MAIN
