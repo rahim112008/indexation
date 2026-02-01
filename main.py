@@ -190,7 +190,7 @@ def view_echo(df):
         st.write(f"🔴 **Os:** {m_os} kg")
 
 # ==========================================
-# 5. BLOC NUTRITION IA - SIMULATEUR ALGÉRIEN
+# 5. BLOC NUTRITION IA - SIMULATEUR ALGÉRIEN (CORRIGÉ)
 # ==========================================
 def view_nutrition(df):
     st.title("🥗 Simulateur de Ration & Prédiction")
@@ -206,8 +206,9 @@ def view_nutrition(df):
     st.markdown(f"**Analyse de départ :** {subj['id']} | Poids : {subj['p70']} kg | GMD Actuel : {subj['GMD']} g/j")
 
     # 2. DÉFINITION DE L'OBJECTIF
+    # --- CORRECTION ICI : Utilisation de col_obj1 ---
     col_obj1, col_obj2 = st.columns(2)
-    with col_id1:
+    with col_obj1: 
         obj_gmd = st.slider("Objectif de croissance visé (g/j)", 100, 500, 250)
     
     # Calcul du besoin théorique (Norme UFL)
@@ -265,12 +266,6 @@ def view_nutrition(df):
         if diff < 0:
             supp_orge = round(abs(diff) / 1.05, 2)
             st.write(f"🛠 **Action :** Ajoutez environ **{supp_orge} kg d'Orge** pour combler le déficit.")
-
-def view_admin(df):
-    st.title("🔧 Admin & Export")
-    if not df.empty:
-        csv = df.to_csv(index=False).encode('utf-8')
-        st.download_button("📥 Exporter les données (CSV)", csv, "data_ovins.csv", "text/csv")
 # ==========================================
 # POINT D'ENTRÉE PRINCIPAL (CORRIGÉ)
 # ==========================================
