@@ -268,22 +268,87 @@ def view_indexation():
             else:
                 st.error("L'identifiant est obligatoire.")
 # ==========================================
-# 4. BLOC ECHO-COMPOSITION (VISUALISATION)
+# 4. BLOC ECHO-COMPOSITION ANALYTIQUE (V9.0)
 # ==========================================
-def view_echo_composition(df):
-    st.title("🥩 Echo-Composition Virtuelle")
-    if df.empty: st.info("Aucune donnée disponible.")
-    else:
-        target = st.selectbox("Sujet à analyser", df['id'].unique())
-        subj = df[df['id'] == target].iloc[0]
-        c1, c2 = st.columns(2)
-        with c1:
-            fig = go.Figure(data=[go.Pie(labels=['Muscle', 'Gras', 'Os'], values=[subj['Muscle'], subj['Gras'], subj['Os']], hole=.4)])
-            st.plotly_chart(fig)
-        with c2:
-            st.metric("Rendement Carcasse", f"{subj['Rendement']}%")
-            st.metric("Volume Estimé", f"{subj['Volume']} L")
+def view_echo(df):
+    st.title("🥩 Analyse de Composition Tissulaire")
+    
+    if df.empty:
+        st.warning("⚠️ Aucune donnée disponible. Veuillez indexer un animal ou peupler la base en mode Admin.")
+        return
 
+    # --- SÉLECTION DE L'ANIMAL ---
+    col_sel, col_info = st.columns([1, 2])
+    with col_sel:
+        target = st.selectbox("🎯 Choisir un sujet", df['id'].unique())
+        sub = df[df['id'] == target].iloc[0]
+        
+    with col_info:
+        st.info(f"**Individu :** {target} | **Catégorie :** {sub['sexe']} | **Âge :** {sub['dentition']}")
+
+    st.markdown("---")
+
+    # --- CALCULS AVANCÉS DE COMPOSITION ---
+    # Ces formules simulent l'échographie en utilisant les corrélations morphométriques
+    # Plus le bassin et le thorax sont larges par rapport au canon (os), plus le muscle est élevé.
+    
+    c1, c2, c3 = st.columns(3)
+    
+    # 1. Analyse du Muscle
+    muscle_kg = round((sub['p70'] * sub['Muscle']) / 100, 2)
+    c1.metric("Masse Musculaire", f"{muscle_kg} kg", f"{sub['Muscle']}%")
+    
+    # 2. Analyse du Gras
+    gras_kg = round((sub['p70'] * sub['Gras']) / 100, 2)
+    c2.metric("Masse Adipeuse", f"{gras_kg} kg", f"{sub['Gras']}%", delta_color="inverse")
+    
+    # 3. Analyse de l'Os
+    os_kg = round((sub['p70'] * sub['Os']) / 100, 2)
+    c3.metric("Masse Osseuse", f"{os_kg} kg", f"{sub['Os']}%")
+
+    st.markdown("---")
+
+    # --- VISUALISATION GRAPHIQUE ---
+    v_col1, v_col2 = st.columns(2)
+
+    with v_col1:
+        st.subheader("📊 Structure de la Carcasse")
+        fig_pie = go.Figure(data=[go.Pie(
+            labels=['Muscle (Viande)', 'Gras (Couverture/Inter)', 'Squelette (Os)'],
+            values=[sub['Muscle'], sub['Gras'], sub['Os']],
+            pull=[0.1, 0, 0], # On met en avant le muscle
+            marker_colors=['#2E7D32', '#FBC02D', '#D32F2F']
+        )])
+        fig_pie.update_layout(showlegend=True, height=400)
+        st.plotly_chart(fig_pie, use_container_width=True)
+
+    with v_col2:
+        st.subheader("📈 Indices de Performance")
+        # Indice de compacité (Poids / Taille)
+        compacite = round(sub['p70'] / sub['h_garrot'], 2) if sub['h_garrot'] > 0 else 0
+        
+        # Jauge de Rendement Carcasse
+        fig_gauge = go.Figure(go.Indicator(
+            mode = "gauge+number",
+            value = sub['Rendement'],
+            title = {'text': "Rendement Carcasse Est. (%)"},
+            gauge = {
+                'axis': {'range': [35, 60]},
+                'bar': {'color': "#2E7D32"},
+                'steps': [
+                    {'range': [35, 45], 'color': "#FFEBEE"},
+                    {'range': [45, 52], 'color': "#E8F5E9"},
+                    {'range': [52, 60], 'color': "#C8E6C9"}]
+            }
+        ))
+        fig_gauge.update_layout(height=350)
+        st.plotly_chart(fig_gauge, use_container_width=True)
+
+    # --- TABLEAU COMPARATIF (LE TROUPEAU) ---
+    st.markdown("---")
+    st.subheader("🏁 Comparaison avec les 5 meilleurs du troupeau")
+    top_5 = df.nlargest(5, 'Muscle')[['id', 'Muscle', 'Rendement', 'GMD']]
+    st.table(top_5)
 # ==========================================
 # 5. BLOC NUTRITION (SIMULATEUR IA)
 # ==========================================
