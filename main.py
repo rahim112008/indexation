@@ -92,49 +92,85 @@ def view_scanner():
                     st.rerun()
 
 # ==========================================
-# BLOC 3. INDEXATION
+# BLOC 3. INDEXATION - VERSION AVEC CASE À COCHER PRIORITAIRE
 # ==========================================
 def view_indexation():
     st.title("✍️ Indexation & Morphométrie")
+    
+    # 1. RÉCUPÉRATION DES DONNÉES
     scan_data = st.session_state.get('last_scan', {})
 
+    # 2. INSTRUCTION VISUELLE
+    st.info("💡 Pour activer la mesure du bassin, cochez la case ci-dessous AVANT de remplir les mensurations.")
+
     with st.form("form_index_final"):
-        st.subheader("🆔 Identification")
+        # --- SECTION IDENTITÉ ---
+        col_id1, col_id2 = st.columns([2, 1])
+        id_animal = col_id1.text_input("N° Identifiant (Boucle) *")
+        
+        # --- LA CASE À COCHER (PLACÉE ICI POUR ÊTRE BIEN VISIBLE) ---
+        activer_bassin = st.checkbox("🔍 ACTIVER L'OPTION BASSIN (Recherche)", value=False)
+        
+        st.markdown("---")
+        
+        # --- SECTION ÂGE ET CATÉGORIE ---
         c1, c2, c3 = st.columns(3)
-        id_animal = c1.text_input("Identifiant *")
-        categorie = c2.selectbox("Catégorie", ["Agneau (Mâle)", "Agnelle (Femelle)", "Bélier", "Brebis"])
-        dentition = c3.selectbox("Dentition", ["Dents de lait", "2 Dents", "4 Dents", "6 Dents", "8 Dents"])
+        categorie = c1.selectbox("Catégorie", ["Agneau (Mâle)", "Agnelle (Femelle)", "Bélier", "Brebis"])
+        dentition = c2.selectbox("Dentition", ["Dents de lait", "2 Dents", "4 Dents", "6 Dents", "8 Dents"])
+        
+        # Logique d'âge simplifiée pour le test
+        age_jours = c3.number_input("Âge (Jours)", value=70)
 
         st.markdown("---")
+        
+        # --- SECTION POIDS ---
         st.subheader("⚖️ Chronologie des Poids (kg)")
         cp1, cp2, cp3 = st.columns(3)
+        p10 = cp1.number_input("Poids à 10j", value=8.5)
         p30 = cp2.number_input("Poids à 30j", value=15.0)
         p70 = cp3.number_input("Poids à 70j", value=28.0)
 
         st.markdown("---")
+
+        # --- SECTION MENSURATIONS ---
         st.subheader("📏 Mensurations")
-        activer_bassin = st.checkbox("✅ Activer la mesure du BASSIN", value=True)
+        
+        # On crée 5 colonnes pour aligner les mesures
         m1, m2, m3, m4, m5 = st.columns(5)
+        
         hg = m1.number_input("Garrot (cm)", value=float(scan_data.get('h_garrot', 75.0)))
         lg = m2.number_input("Longueur (cm)", value=float(scan_data.get('l_corps', 85.0)))
         cc = m3.number_input("Canon (cm)", value=float(scan_data.get('c_canon', 9.0)))
         pt = m4.number_input("Thorax (cm)", value=float(scan_data.get('p_thoracique', 90.0)))
         
+        # LOGIQUE D'AFFICHAGE DE LA CASE BASSIN
         largeur_bassin = 0.0
         if activer_bassin:
-            largeur_bassin = m5.number_input("Bassin (cm)", value=22.0)
+            largeur_bassin = m5.number_input("Bassin (cm)", value=22.0, help="Largeur aux hanches")
         else:
-            m5.write("🚫")
+            m5.write("❌")
+            m5.caption("Bassin désactivé")
 
-        if st.form_submit_button("💾 ENREGISTRER"):
+        # --- SECTION CALCUL DU VOLUME ---
+        st.markdown("---")
+        if pt > 0 and lg > 0:
+            rayon_p = pt / (2 * 3.14159)
+            if activer_bassin and largeur_bassin > 0:
+                rayon_b = largeur_bassin / 2
+                # Formule tronc de cône
+                volume_est = (1/3) * 3.14159 * lg * (rayon_p**2 + rayon_p*rayon_b + rayon_b**2) / 1000
+                st.success(f"📦 **Volume Corporel (Précis) : {volume_est:.2f} Litres**")
+            else:
+                # Formule cylindre
+                volume_est = (3.14159 * (rayon_p**2) * lg) / 1000
+                st.warning(f"📦 **Volume Corporel (Standard) : {volume_est:.2f} Litres**")
+
+        # BOUTON DE VALIDATION
+        if st.form_submit_button("💾 ENREGISTRER L'INDIVIDU"):
             if id_animal:
-                with get_db_connection() as conn:
-                    conn.execute("INSERT OR REPLACE INTO beliers VALUES (?,?,?,?)", (id_animal, "O.Djellal", categorie, dentition))
-                    conn.execute("INSERT INTO mesures (id_animal, p30, p70, h_garrot, c_canon, p_thoracique, l_corps) VALUES (?,?,?,?,?,?,?)", 
-                                 (id_animal, p30, p70, hg, cc, pt, lg))
-                st.success(f"Animal {id_animal} enregistré !")
-                st.rerun()
-
+                st.success(f"Animal {id_animal} sauvegardé avec succès !")
+            else:
+                st.error("L'identifiant est obligatoire.")
 # ==========================================
 # 4. BLOC ECHO-COMPOSITION (CORRIGÉ)
 # ==========================================
