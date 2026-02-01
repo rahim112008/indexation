@@ -92,7 +92,7 @@ def view_scanner():
                     st.rerun()
 
 # ==========================================
-# BLOC 3. INDEXATION - VERSION EXPERT (ÂGE FLEXIBLE)
+# BLOC 3. INDEXATION - VERSION CORRIGÉE (ÂGE FIXE)
 # ==========================================
 def view_indexation():
     st.title("✍️ Indexation & Morphométrie")
@@ -110,7 +110,7 @@ def view_indexation():
         id_animal = col_id1.text_input("N° Identifiant (Boucle) *")
         categorie = col_id2.selectbox("Catégorie", ["Agneau", "Agnelle", "Bélier", "Brebis"])
         
-        # --- NOUVEAU : SÉLECTEUR DE MÉTHODE D'ÂGE ---
+        # --- SÉLECTEUR DE MÉTHODE D'ÂGE ---
         st.markdown("##### ⏳ Détermination de l'âge")
         methode_age = st.radio(
             "Choisir la méthode :",
@@ -118,15 +118,15 @@ def view_indexation():
             horizontal=True
         )
         
-        c_age1, c_age2 = st.columns(2)
+        # Logique de détermination dynamique
         if methode_age == "Par Dentition":
-            dentition = c_age1.selectbox("Nombre de dents", ["Dents de lait", "2 Dents", "4 Dents", "6 Dents", "8 Dents"])
-            age_jours = 70  # Valeur par défaut pour le calcul GMD
+            dentition = st.selectbox("Nombre de dents", ["Dents de lait", "2 Dents", "4 Dents", "6 Dents", "8 Dents"])
+            age_jours = 70  # Valeur pivot
         elif methode_age == "Âge Exact (Jours)":
-            age_jours = c_age1.number_input("Nombre de jours exacts", value=70, min_value=1)
+            age_jours = st.number_input("Entrez le nombre de jours", value=70, min_value=1)
             dentition = "Saisie jours"
         else:
-            age_mois = c_age1.number_input("Nombre de mois", value=2, min_value=1)
+            age_mois = st.number_input("Entrez le nombre de mois", value=2, min_value=1)
             age_jours = age_mois * 30
             dentition = f"Est. {age_mois} mois"
 
@@ -173,8 +173,8 @@ def view_indexation():
         # BOUTON DE VALIDATION
         if st.form_submit_button("💾 ENREGISTRER L'INDIVIDU", use_container_width=True):
             if id_animal:
-                # Ici vous ajoutez votre logique SQL habituelle
-                st.success(f"Animal {id_animal} sauvegardé ! (Âge : {age_jours} jours / {dentition})")
+                # Bloc de sauvegarde (à adapter selon votre DB)
+                st.success(f"Animal {id_animal} sauvegardé ! ({age_jours}j / {dentition})")
             else:
                 st.error("L'identifiant est obligatoire.")
 # ==========================================
