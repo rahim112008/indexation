@@ -190,29 +190,87 @@ def view_echo(df):
         st.write(f"🔴 **Os:** {m_os} kg")
 
 # ==========================================
-# 5. BLOC NUTRITION & ADMIN
+# 5. BLOC NUTRITION IA - SIMULATEUR ALGÉRIEN
 # ==========================================
 def view_nutrition(df):
-    st.title("🥗 Nutritionniste IA")
-    if df.empty: return
-    target = st.selectbox("Animal Cible", df['id'].unique(), key="nut_sel")
+    st.title("🥗 Simulateur de Ration & Prédiction")
+    
+    if df is None or df.empty:
+        st.warning("⚠️ Aucune donnée disponible. Enregistrez un animal d'abord.")
+        return
+
+    # 1. SÉLECTION DE L'ANIMAL ET ANALYSE
+    target = st.selectbox("Sélectionner l'individu", df['id'].unique())
     subj = df[df['id'] == target].iloc[0]
-    obj_gmd = st.slider("Objectif de GMD (g/j)", 100, 500, 300)
-    besoin = round((0.035 * (subj['p70']**0.75)) + (obj_gmd / 1000) * 3.5, 2)
-    st.success(f"### Besoin Journalier : {besoin} UFL")
+    
+    st.markdown(f"**Analyse de départ :** {subj['id']} | Poids : {subj['p70']} kg | GMD Actuel : {subj['GMD']} g/j")
+
+    # 2. DÉFINITION DE L'OBJECTIF
+    col_obj1, col_obj2 = st.columns(2)
+    with col_id1:
+        obj_gmd = st.slider("Objectif de croissance visé (g/j)", 100, 500, 250)
+    
+    # Calcul du besoin théorique (Norme UFL)
+    besoin_ufl = round((0.035 * (subj['p70']**0.75)) + (obj_gmd / 1000) * 3.5, 2)
+    besoin_pdi = round(besoin_ufl * 85, 0) # Estimation Protéines (PDI)
+
+    st.info(f"🎯 **Besoin cible pour atteindre {obj_gmd}g/j : {besoin_ufl} UFL**")
+
+    st.markdown("---")
+    st.subheader("🌾 Composition de la Ration (Marché Algérien)")
+    
+    # 3. SIMULATEUR D'ALIMENTS LOCAUX
+    col_f1, col_f2, col_f3, col_f4 = st.columns(4)
+    
+    # Valeurs nutritionnelles moyennes (UFL/kg)
+    q_orge = col_f1.number_input("Orge (kg)", min_value=0.0, step=0.1, value=0.5, help="1.05 UFL/kg")
+    q_son = col_f2.number_input("Son de blé (kg)", min_value=0.0, step=0.1, value=0.3, help="0.90 UFL/kg")
+    q_luzerne = col_f3.number_input("Luzerne (kg)", min_value=0.0, step=0.1, value=1.0, help="0.65 UFL/kg")
+    q_paille = col_f4.number_input("Paille (kg)", min_value=0.0, step=0.1, value=0.5, help="0.40 UFL/kg")
+
+    # Calcul de l'apport total
+    apport_total = (q_orge * 1.05) + (q_son * 0.90) + (q_luzerne * 0.65) + (q_paille * 0.40)
+    apport_total = round(apport_total, 2)
+
+    # 4. PRÉDICTION DE L'IA
+    st.markdown("---")
+    st.subheader("🔮 Prédiction de Performance")
+    
+    diff = apport_total - besoin_ufl
+    
+    c_res1, c_res2 = st.columns(2)
+    
+    with c_res1:
+        if apport_total < besoin_ufl:
+            st.error(f"📉 Ration Insuffisante : {apport_total} UFL apportés.")
+            st.write(f"⚠️ Manque **{abs(diff):.2f} UFL** pour atteindre l'objectif.")
+        elif abs(diff) <= 0.1:
+            st.success(f"✅ Ration Équilibrée : {apport_total} UFL.")
+            st.write("L'animal devrait atteindre son objectif de croissance.")
+        else:
+            st.warning(f"📈 Ration Excédentaire : {apport_total} UFL.")
+            st.write(f"💰 Risque de gaspillage de nourriture (+{diff:.2f} UFL).")
+
+    with c_res2:
+        # Prédiction du poids à 30 jours
+        poids_futur = round(subj['p70'] + (obj_gmd * 30 / 1000), 1)
+        st.metric("Poids Prédit (J+30)", f"{poids_futur} kg", delta=f"+{obj_gmd*30/1000} kg")
+
+    # CONSEIL EXPERT DYNAMIQUE
+    with st.expander("💡 Conseil Stratégique de l'IA"):
+        if q_luzerne < 0.5:
+            st.write("🥛 **Conseil :** Augmentez la Luzerne pour améliorer le développement musculaire (Azote).")
+        if q_orge > 1.2:
+            st.write("⚠️ **Alerte :** Trop d'orge ! Risque d'acidose. Ajoutez de la paille pour la rumination.")
+        if diff < 0:
+            supp_orge = round(abs(diff) / 1.05, 2)
+            st.write(f"🛠 **Action :** Ajoutez environ **{supp_orge} kg d'Orge** pour combler le déficit.")
 
 def view_admin(df):
-    st.title("🔧 Administration")
+    st.title("🔧 Admin & Export")
     if not df.empty:
-        st.download_button("📥 Télécharger CSV", df.to_csv(index=False), "export_ovins.csv")
-    
-    if st.button("🔥 RÉINITIALISER LA BASE"):
-        with get_db_connection() as conn:
-            conn.execute("DROP TABLE IF EXISTS mesures")
-            conn.execute("DROP TABLE IF EXISTS beliers")
-        init_db()
-        st.rerun()
-
+        csv = df.to_csv(index=False).encode('utf-8')
+        st.download_button("📥 Exporter les données (CSV)", csv, "data_ovins.csv", "text/csv")
 # ==========================================
 # POINT D'ENTRÉE PRINCIPAL (CORRIGÉ)
 # ==========================================
