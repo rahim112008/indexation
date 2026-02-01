@@ -268,87 +268,93 @@ def view_indexation():
             else:
                 st.error("L'identifiant est obligatoire.")
 # ==========================================
-# 4. BLOC ECHO-COMPOSITION ANALYTIQUE (V9.0)
+# 4. BLOC ECHO-COMPOSITION ANALYTIQUE (V9.1)
 # ==========================================
 def view_echo(df):
-    st.title("🥩 Analyse de Composition Tissulaire")
+    st.title("🥩 Expertise de la Carcasse")
     
-    if df.empty:
-        st.warning("⚠️ Aucune donnée disponible. Veuillez indexer un animal ou peupler la base en mode Admin.")
+    if df is None or df.empty:
+        st.warning("⚠️ Aucune donnée disponible pour l'analyse. Veuillez d'abord indexer des animaux.")
         return
 
-    # --- SÉLECTION DE L'ANIMAL ---
-    col_sel, col_info = st.columns([1, 2])
-    with col_sel:
-        target = st.selectbox("🎯 Choisir un sujet", df['id'].unique())
-        sub = df[df['id'] == target].iloc[0]
+    # Sélection de l'animal
+    target = st.selectbox("🎯 Sélectionner un sujet pour analyse détaillée", df['id'].unique())
+    sub = df[df['id'] == target].iloc[0]
+
+    # --- EN-TÊTE DE PERFORMANCE ---
+    col_a, col_b, col_c = st.columns(3)
+    with col_a:
+        st.metric("Poids Actuel (P70)", f"{sub['p70']} kg")
+    with col_b:
+        # Calcul de la compacité (Poids / Taille)
+        compacite = round(sub['p70'] / sub['h_garrot'], 2) if sub['h_garrot'] > 0 else 0
+        st.metric("Indice de Compacité", f"{compacite}")
+    with col_c:
+        st.metric("Rendement Estimé", f"{sub['Rendement']}%")
+
+    st.markdown("---")
+
+    # --- RÉPARTITION DÉTAILLÉE (KG & %) ---
+    st.subheader("📊 Composition Tissulaire Estimée")
+    
+    # Calcul des masses réelles en kg
+    m_muscle = round((sub['p70'] * sub['Muscle']) / 100, 2)
+    m_gras = round((sub['p70'] * sub['Gras']) / 100, 2)
+    m_os = round((sub['p70'] * sub['Os']) / 100, 2)
+
+    m1, m2, m3 = st.columns(3)
+    
+    with m1:
+        st.markdown(f"### 🟢 Muscle\n**{m_muscle} kg** ({sub['Muscle']}%)")
+        st.caption("Masse maigre exploitable")
+    
+    with m2:
+        st.markdown(f"### 🟡 Gras\n**{m_gras} kg** ({sub['Gras']}%)")
+        st.caption("Gras de couverture et intermusculaire")
         
-    with col_info:
-        st.info(f"**Individu :** {target} | **Catégorie :** {sub['sexe']} | **Âge :** {sub['dentition']}")
+    with m3:
+        st.markdown(f"### 🔴 Os\n**{m_os} kg** ({sub['Os']}%)")
+        st.caption("Squelette et tissus conjonctifs")
 
+    # --- GRAPHIQUES DE RÉPARTITION ---
     st.markdown("---")
+    g1, g2 = st.columns(2)
 
-    # --- CALCULS AVANCÉS DE COMPOSITION ---
-    # Ces formules simulent l'échographie en utilisant les corrélations morphométriques
-    # Plus le bassin et le thorax sont larges par rapport au canon (os), plus le muscle est élevé.
-    
-    c1, c2, c3 = st.columns(3)
-    
-    # 1. Analyse du Muscle
-    muscle_kg = round((sub['p70'] * sub['Muscle']) / 100, 2)
-    c1.metric("Masse Musculaire", f"{muscle_kg} kg", f"{sub['Muscle']}%")
-    
-    # 2. Analyse du Gras
-    gras_kg = round((sub['p70'] * sub['Gras']) / 100, 2)
-    c2.metric("Masse Adipeuse", f"{gras_kg} kg", f"{sub['Gras']}%", delta_color="inverse")
-    
-    # 3. Analyse de l'Os
-    os_kg = round((sub['p70'] * sub['Os']) / 100, 2)
-    c3.metric("Masse Osseuse", f"{os_kg} kg", f"{sub['Os']}%")
-
-    st.markdown("---")
-
-    # --- VISUALISATION GRAPHIQUE ---
-    v_col1, v_col2 = st.columns(2)
-
-    with v_col1:
-        st.subheader("📊 Structure de la Carcasse")
+    with g1:
+        # Graphique en secteurs (Donut)
         fig_pie = go.Figure(data=[go.Pie(
-            labels=['Muscle (Viande)', 'Gras (Couverture/Inter)', 'Squelette (Os)'],
-            values=[sub['Muscle'], sub['Gras'], sub['Os']],
-            pull=[0.1, 0, 0], # On met en avant le muscle
+            labels=['Muscle', 'Gras', 'Os'],
+            values=[m_muscle, m_gras, m_os],
+            hole=.5,
             marker_colors=['#2E7D32', '#FBC02D', '#D32F2F']
         )])
-        fig_pie.update_layout(showlegend=True, height=400)
+        fig_pie.update_layout(title="Proportions de la carcasse", height=350, margin=dict(l=20, r=20, t=40, b=20))
         st.plotly_chart(fig_pie, use_container_width=True)
 
-    with v_col2:
-        st.subheader("📈 Indices de Performance")
-        # Indice de compacité (Poids / Taille)
-        compacite = round(sub['p70'] / sub['h_garrot'], 2) if sub['h_garrot'] > 0 else 0
-        
-        # Jauge de Rendement Carcasse
-        fig_gauge = go.Figure(go.Indicator(
-            mode = "gauge+number",
-            value = sub['Rendement'],
-            title = {'text': "Rendement Carcasse Est. (%)"},
-            gauge = {
-                'axis': {'range': [35, 60]},
-                'bar': {'color': "#2E7D32"},
-                'steps': [
-                    {'range': [35, 45], 'color': "#FFEBEE"},
-                    {'range': [45, 52], 'color': "#E8F5E9"},
-                    {'range': [52, 60], 'color': "#C8E6C9"}]
-            }
-        ))
-        fig_gauge.update_layout(height=350)
-        st.plotly_chart(fig_gauge, use_container_width=True)
+    with g2:
+        # Histogramme de qualité
+        fig_bar = px.bar(
+            x=["Muscle", "Gras", "Os"],
+            y=[m_muscle, m_gras, m_os],
+            color=["Muscle", "Gras", "Os"],
+            color_discrete_map={'Muscle':'#2E7D32', 'Gras':'#FBC02D', 'Os':'#D32F2F'},
+            labels={'x': 'Tissu', 'y': 'Masse (kg)'},
+            title="Poids par type de tissu"
+        )
+        fig_bar.update_layout(showlegend=False, height=350)
+        st.plotly_chart(fig_bar, use_container_width=True)
 
-    # --- TABLEAU COMPARATIF (LE TROUPEAU) ---
+    # --- NOTE DE CONFORMATION ---
     st.markdown("---")
-    st.subheader("🏁 Comparaison avec les 5 meilleurs du troupeau")
-    top_5 = df.nlargest(5, 'Muscle')[['id', 'Muscle', 'Rendement', 'GMD']]
-    st.table(top_5)
+    ratio_mo = round(sub['Muscle'] / sub['Os'], 2) if sub['Os'] > 0 else 0
+    st.write(f"🧬 **Ratio Muscle/Os :** {ratio_mo} (Indicateur de précocité et de qualité bouchère)")
+    
+    if ratio_mo > 3.5:
+        st.success("🏆 Conformation Excellente (Type Viande Supérieur)")
+    elif ratio_mo > 2.8:
+        st.info("✅ Conformation Bonne (Standard Ouled Djellal)")
+    else:
+        st.warning("⚠️ Conformation Faible (Individu tardif ou sous-alimenté)")
 # ==========================================
 # 5. BLOC NUTRITION (SIMULATEUR IA)
 # ==========================================
