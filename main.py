@@ -314,7 +314,7 @@ def moteur_calcul_expert(row):
     except: return pd.Series(res)
 
 # ==========================================
-# 6. BLOC EXPERTISE ANALYTIQUE (V15 - AMÉLIORÉ)
+# 6. BLOC EXPERTISE ANALYTIQUE (V15 - FIXÉ)
 # ==========================================
 def view_echo(df):
     st.title("🥩 Expertise Analytique de la Carcasse")
@@ -335,11 +335,10 @@ def view_echo(df):
         st.metric("Poids Vif", f"{sub['p_actuel']} kg")
     with col_b:
         compacite = round(sub['p_actuel'] / sub['h_garrot'], 2) if sub['h_garrot'] > 0 else 0
-        st.metric("Indice Compacité", f"{compacite}", help="Poids par cm de hauteur. Plus il est haut, plus l'animal est 'épais'.")
+        st.metric("Indice Compacité", f"{compacite}", help="Poids par cm de hauteur.")
     with col_c:
         st.metric("Rendement Carcasse", f"{sub['Rendement']}%")
     with col_d:
-        # Calcul du SNC (Surface de la Noix de Côtelette)
         st.metric("SNC (Muscularité)", f"{sub['SNC']} cm²")
 
     st.markdown("---")
@@ -347,25 +346,29 @@ def view_echo(df):
     # --- RÉPARTITION TISSULAIRE (KG & %) ---
     st.subheader("📊 Composition Tissulaire Estimée (Masse Réelle)")
     
-    # Calcul des masses en kg basées sur le poids actuel
     m_muscle = round((sub['p_actuel'] * sub['Muscle']) / 100, 2)
     m_gras = round((sub['p_actuel'] * sub['Gras']) / 100, 2)
     m_os = round((sub['p_actuel'] * sub['Os']) / 100, 2)
 
+    # Fonction de sécurité pour éviter les crashs de st.progress
+    def safe_progress(value):
+        # On divise par 100 et on force entre 0.0 et 1.0
+        return float(max(0.0, min(1.0, value / 100)))
+
     m1, m2, m3 = st.columns(3)
     with m1:
         st.markdown(f"### 🟢 Muscle\n## {m_muscle} kg")
-        st.progress(sub['Muscle'] / 100)
+        st.progress(safe_progress(sub['Muscle']))
         st.caption(f"Soit {sub['Muscle']}% de la masse totale")
     
     with m2:
         st.markdown(f"### 🟡 Gras\n## {m_gras} kg")
-        st.progress(sub['Gras'] / 100)
+        st.progress(safe_progress(sub['Gras']))
         st.caption(f"Soit {sub['Gras']}% (État d'engraissement)")
         
     with m3:
         st.markdown(f"### 🔴 Os\n## {m_os} kg")
-        st.progress(sub['Os'] / 100)
+        st.progress(safe_progress(sub['Os']))
         st.caption(f"Soit {sub['Os']}% (Squelette)")
 
     # --- VISUALISATION GRAPHIQUE ---
@@ -381,22 +384,20 @@ def view_echo(df):
         st.plotly_chart(fig_pie, use_container_width=True)
 
     with g2:
-        # Échelle de classement de la conformation (Inspiré EUROP)
         ratio_mo = round(sub['Muscle'] / sub['Os'], 2) if sub['Os'] > 0 else 0
-        
         st.write("### 🏆 Score de Conformation")
         if ratio_mo > 3.5:
-            score, label, color = 5, "Classe S (Supérieur)", "gold"
+            label = "Classe S (Supérieur)"
         elif ratio_mo > 3.0:
-            score, label, color = 4, "Classe E (Excellent)", "green"
+            label = "Classe E (Excellent)"
         elif ratio_mo > 2.5:
-            score, label, color = 3, "Classe U (Très Bon)", "blue"
+            label = "Classe U (Très Bon)"
         else:
-            score, label, color = 2, "Classe R (Standard)", "orange"
+            label = "Classe R (Standard)"
 
         st.subheader(label)
         st.write(f"🧬 **Ratio Muscle/Os :** {ratio_mo}")
-        st.info(f"Note technique : Cet individu présente un développement musculaire {label.lower()} par rapport au standard de la race.")
+        st.info(f"Note technique : Cet individu présente un développement musculaire {label.lower()}.")
 
     # --- SECTION VALEUR COMMERCIALE ---
     st.markdown("---")
