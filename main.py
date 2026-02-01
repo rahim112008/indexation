@@ -270,7 +270,109 @@ def moteur_calcul_expert(row):
         res['Rendement'] = round(42 + (res['Muscle'] * 0.12), 1)
         return pd.Series(res)
     except: return pd.Series(res)
+# ==========================================
+# BLOC 6 : NUTRITIONNISTE EXPERT & GÉNÉRATEUR DE RECETTES
+# ==========================================
 
+def view_nutrition(df):
+    st.title("🥗 Expert Nutritionniste & Formulation de Ration")
+    if df.empty:
+        st.info("Veuillez d'abord enregistrer des animaux.")
+        return
+
+    # --- 1. SÉLECTION DU PROFIL PHYSIOLOGIQUE ---
+    st.sidebar.subheader("📋 Profil de l'Animal")
+    target_id = st.selectbox("Choisir l'animal", df['id'].unique())
+    sub = df[df['id'] == target_id].iloc[0]
+    
+    profil = st.sidebar.selectbox("État physiologique", [
+        "Engraissement rapide (Bélier/Agneau)",
+        "Brebis Gestante (Fin de gestation)",
+        "Brebis Allaitante",
+        "Croissance Agneau/Agnelle",
+        "Entretien (Bélier adulte)"
+    ])
+
+    obj_gmd = st.sidebar.slider("Objectif de gain de poids (g/jour)", 0, 500, 250)
+    
+    # --- 2. MOTEUR DE BESOINS SPÉCIFIQUES (Normes adaptées) ---
+    poids = sub['p_actuel']
+    if "Engraissement" in profil:
+        besoin_ufl = (0.042 * (poids**0.75)) + (obj_gmd/1000 * 3.9)
+        besoin_pdi = (poids * 0.6) + (obj_gmd * 0.45)
+    elif "Gestante" in profil:
+        besoin_ufl = (0.040 * (poids**0.75)) + 0.45  # Surplus pour le fœtus
+        besoin_pdi = (poids * 0.5) + 65
+    elif "Allaitante" in profil:
+        besoin_ufl = (0.040 * (poids**0.75)) + 0.85  # Fort besoin pour le lait
+        besoin_pdi = (poids * 0.5) + 110
+    elif "Croissance" in profil:
+        besoin_ufl = (0.045 * (poids**0.75)) + (obj_gmd/1000 * 3.5)
+        besoin_pdi = (poids * 0.8) + (obj_gmd * 0.5)
+    else: # Entretien
+        besoin_ufl = 0.038 * (poids**0.75)
+        besoin_pdi = poids * 0.5
+
+    # --- 3. BASE ALIMENTS DZ ---
+    aliments_dz = {
+        "Orge (Chaïr)": {"ufl": 1.05, "pdi": 80},
+        "Son de blé (Nokhala)": {"ufl": 0.88, "pdi": 95},
+        "Maïs concassé": {"ufl": 1.18, "pdi": 75},
+        "Foin Vesse-Avoine": {"ufl": 0.68, "pdi": 65},
+        "Paille": {"ufl": 0.38, "pdi": 35}
+    }
+
+    # --- 4. AFFICHAGE DES BESOINS ---
+    st.subheader(f"📊 Besoins calculés pour : {profil}")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Énergie requise", f"{besoin_ufl:.2f} UFL")
+    c2.metric("Protéines requises", f"{besoin_pdi:.1f} g PDI")
+    c3.metric("Poids Actuel", f"{poids} kg")
+
+    st.markdown("---")
+
+    # --- 5. GÉNÉRATEUR AUTOMATIQUE DE RECETTE ---
+    st.subheader("👨‍🍳 Ma Recette Optimale")
+    
+    if st.button("🪄 Générer la recette et le ratio idéal"):
+        # Logique simplifiée de formulation (Ratio concentré/fourrage)
+        # On priorise le foin pour le rumen, puis on complète avec le concentré
+        quantite_foin = round(poids * 0.015, 1) # 1.5% du poids vif en foin
+        ufl_foin = quantite_foin * aliments_dz["Foin Vesse-Avoine"]["ufl"]
+        pdi_foin = quantite_foin * aliments_dz["Foin Vesse-Avoine"]["pdi"]
+        
+        reste_ufl = max(0, besoin_ufl - ufl_foin)
+        # On utilise un mélange 70% Orge / 30% Son pour combler le reste
+        quantite_orge = round((reste_ufl * 0.7) / aliments_dz["Orge (Chaïr)"]["ufl"], 2)
+        quantite_son = round((reste_ufl * 0.3) / aliments_dz["Son de blé (Nokhala)"]["pdi"], 2) # On équilibre par le son
+        
+        st.success("✅ Recette générée pour couvrir l'objectif de croissance !")
+        
+        # Affichage visuel de la recette
+        r1, r2, r3, r4 = st.columns(4)
+        r1.markdown(f"🌾 **Orge**\n### {quantite_orge} kg")
+        r2.markdown(f"📦 **Son**\n### {quantite_son} kg")
+        r3.markdown(f"🌿 **Foin**\n### {quantite_foin} kg")
+        r4.markdown(f"💧 **Eau**\n### ~ {round(poids*0.1, 1)} L")
+
+        # Analyse du ratio
+        total_poids_sec = quantite_orge + quantite_son + quantite_foin
+        ratio_concentre = ((quantite_orge + quantite_son) / total_poids_sec) * 100
+        
+        st.info(f"💡 **Conseil de l'expert :** Votre ratio concentré est de **{int(ratio_concentre)}%**. " + 
+                ("Attention au risque d'acidose (trop haut)." if ratio_concentre > 70 else "Ratio sécurisé pour la panse."))
+
+    # --- 6. PRÉDICTION D'ÉVOLUTION ---
+    st.markdown("---")
+    st.subheader("📈 Prédiction de gain de poids")
+    jours = st.slider("Nombre de jours de ce régime", 30, 150, 90)
+    poids_final = poids + (obj_gmd/1000 * jours)
+    
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=[0, jours], y=[poids, poids_final], mode='lines+markers', name='Croissance'))
+    fig.update_layout(title=f"Evolution estimée : {poids_final:.1f} kg le { (datetime.now() + timedelta(days=jours)).strftime('%d/%m/%Y') }",
+                      xaxis_title="Jours", yaxis_title="Poids (kg)")
+    st.plotly_chart(fig, use_container_width=True)
 # ==========================================
 # MAIN : NAVIGATION
 # ==========================================
