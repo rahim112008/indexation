@@ -117,73 +117,75 @@ def view_scanner():
                         st.rerun()
 
 # ==========================================
-# BLOC 3. INDEXATION AVEC OPTION BASSIN (V8.8)
+# BLOC 3. INDEXATION - VERSION VISIBILITÉ TOTALE
 # ==========================================
 def view_indexation():
-    st.title("✍️ Indexation & Morphométrie Avancée")
+    st.title("✍️ Indexation & Morphométrie")
     
+    # Récupération des données du scanner (ou valeurs à 0 par défaut)
     scan_data = st.session_state.get('last_scan', {})
 
-    with st.form("form_index_v8_8"):
-        # --- SECTION IDENTITÉ & ÂGE (Résumé) ---
+    with st.form("form_index_final"):
+        st.subheader("🆔 Identification")
         c1, c2, c3 = st.columns(3)
         id_animal = c1.text_input("Identifiant *")
         categorie = c2.selectbox("Catégorie", ["Agneau (Mâle)", "Agnelle (Femelle)", "Bélier", "Brebis"])
         dentition = c3.selectbox("Dentition", ["Dents de lait", "2 Dents", "4 Dents", "6 Dents", "8 Dents"])
 
         st.markdown("---")
-
+        
         # --- SECTION POIDS ---
         st.subheader("⚖️ Chronologie des Poids (kg)")
         cp1, cp2, cp3 = st.columns(3)
-        p10 = cp1.number_input("Poids à 10j", value=8.5)
-        p30 = cp2.number_input("Poids à 30j", value=15.0)
-        p70 = cp3.number_input("Poids à 70j", value=28.0)
+        p10 = cp1.number_input("Poids à 10j", value=8.5, step=0.1)
+        p30 = cp2.number_input("Poids à 30j", value=15.0, step=0.1)
+        p70 = cp3.number_input("Poids à 70j", value=28.0, step=0.1)
 
         st.markdown("---")
 
-        # --- SECTION MENSURATIONS + OPTION BASSIN ---
-        st.subheader("📏 Mensurations & Structure")
+        # --- SECTION MENSURATIONS ---
+        st.subheader("📏 Mensurations Avancées")
         
-        # Option Bassin
-        activer_bassin = st.checkbox("➕ Ajouter la mesure du bassin (Option Recherche)", value=False)
+        # On place la case à cocher bien en évidence
+        activer_bassin = st.checkbox("✅ Activer la mesure du BASSIN", value=True)
         
-        cm1, cm2, cm3, cm4 = st.columns(4)
-        hg = cm1.number_input("Hauteur Garrot (cm)", value=float(scan_data.get('h_garrot', 0.0)))
-        lg = cm2.number_input("Longueur Corps (cm)", value=float(scan_data.get('l_corps', 0.0)))
-        cc = cm3.number_input("Circonférence Canon (cm)", value=float(scan_data.get('c_canon', 0.0)))
-        pt = cm4.number_input("Périmètre Thorax (cm)", value=float(scan_data.get('p_thoracique', 0.0)))
+        col_m1, col_m2, col_m3, col_m4, col_m5 = st.columns(5)
         
-        # Affichage conditionnel de la taille du bassin
+        hg = col_m1.number_input("Garrot (cm)", value=float(scan_data.get('h_garrot', 75.0)))
+        lg = col_m2.number_input("Longueur (cm)", value=float(scan_data.get('l_corps', 85.0)))
+        cc = col_m3.number_input("Canon (cm)", value=float(scan_data.get('c_canon', 9.0)))
+        pt = col_m4.number_input("Thorax (cm)", value=float(scan_data.get('p_thoracique', 90.0)))
+        
+        # La case du bassin s'affiche si la checkbox est cochée
         largeur_bassin = 0.0
         if activer_bassin:
-            st.info("ℹ️ La largeur du bassin influence le calcul de la compacité et du rendement carcasse.")
-            largeur_bassin = st.number_input("Largeur du Bassin (cm)", min_value=0.0, max_value=50.0, value=22.0)
+            largeur_bassin = col_m5.number_input("Bassin (cm)", value=22.0)
+        else:
+            col_m5.write("🚫 Option désactivée")
 
-        # --- CALCULS EN TEMPS RÉEL ---
-        st.markdown("---")
+        # --- CALCUL DU VOLUME (AFFICHAGE EN TEMPS RÉEL DANS LE FORMULAIRE) ---
+        st.markdown("### 📊 Analyse de la Structure")
         
-        # Calcul du volume adapté
+        # Calcul du volume
         if pt > 0 and lg > 0:
-            rayon = pt / (2 * np.pi)
+            rayon_p = pt / (2 * 3.14159) # rayon poitrine
             if activer_bassin and largeur_bassin > 0:
-                # Modèle de volume plus complexe (Cône tronqué : poitrine vers bassin)
-                rayon_b = largeur_bassin / 2
-                volume_est = (1/3) * np.pi * lg * (rayon**2 + rayon*rayon_b + rayon_b**2) / 1000
-                note_bassin = "Précision : Haute (Modèle Structurel)"
+                rayon_b = largeur_bassin / 2 # rayon bassin
+                # Formule du tronc de cône (plus précise)
+                volume_est = (1/3) * 3.14159 * lg * (rayon_p**2 + rayon_p*rayon_b + rayon_b**2) / 1000
+                methode = "Modèle Structurel (Précis)"
             else:
-                # Modèle cylindrique standard
-                volume_est = (np.pi * (rayon**2) * lg) / 1000
-                note_bassin = "Précision : Standard (Modèle Cylindrique)"
+                volume_est = (3.14159 * (rayon_p**2) * lg) / 1000
+                methode = "Modèle Cylindrique (Standard)"
             
-            st.metric("Volume Corporel Estimé", f"{volume_est:.2f} Litres", delta=note_bassin)
-
-        # --- BOUTON DE SAUVEGARDE ---
-        if st.form_submit_button("💾 ENREGISTRER L'INDIVIDU", use_container_width=True):
+            st.info(f"📦 **Volume Corporel : {volume_est:.2f} Litres** | Méthode : {methode}")
+        
+        # Bouton de sauvegarde
+        if st.form_submit_button("💾 ENREGISTRER L'EXPERTISE"):
             if id_animal:
-                st.success(f"✅ Individu {id_animal} enregistré avec {'option bassin' if activer_bassin else 'mesures standards'}.")
+                st.success(f"Animal {id_animal} enregistré !")
             else:
-                st.error("L'identifiant est requis.")
+                st.error("L'identifiant est obligatoire !")
 
 # ==========================================
 # BLOC 3. INDEXATION EXPERTE CONSOLIDÉE (V8.7)
