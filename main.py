@@ -188,97 +188,85 @@ def view_indexation():
                 st.error("L'identifiant est obligatoire !")
 
 # ==========================================
-# BLOC 3. INDEXATION EXPERTE CONSOLIDÉE (V8.7)
+# BLOC 3. INDEXATION - VERSION AVEC CASE À COCHER PRIORITAIRE
 # ==========================================
 def view_indexation():
-    st.title("✍️ Indexation Complète & État Civil")
+    st.title("✍️ Indexation & Morphométrie")
     
-    # 1. Récupération des données du scanner (Variables de mensuration)
+    # 1. RÉCUPÉRATION DES DONNÉES
     scan_data = st.session_state.get('last_scan', {})
 
-    with st.form("form_index_final_expert"):
-        # --- SECTION A : CATÉGORIE & IDENTITÉ ---
-        st.subheader("🧬 Identification de l'animal")
-        c1, c2 = st.columns(2)
-        with c1:
-            id_animal = st.text_input("Identifiant (Boucle/Puce) *", placeholder="Ex: OD-2024-001")
-        with c2:
-            categorie = st.selectbox("Catégorie Zootechnique", 
-                                   ["Agneau (Mâle)", "Agnelle (Femelle)", "Bélier", "Brebis"])
+    # 2. INSTRUCTION VISUELLE
+    st.info("💡 Pour activer la mesure du bassin, cochez la case ci-dessous AVANT de remplir les mensurations.")
+
+    with st.form("form_index_final"):
+        # --- SECTION IDENTITÉ ---
+        col_id1, col_id2 = st.columns([2, 1])
+        id_animal = col_id1.text_input("N° Identifiant (Boucle) *")
+        
+        # --- LA CASE À COCHER (PLACÉE ICI POUR ÊTRE BIEN VISIBLE) ---
+        activer_bassin = st.checkbox("🔍 ACTIVER L'OPTION BASSIN (Recherche)", value=False)
+        
+        st.markdown("---")
+        
+        # --- SECTION ÂGE ET CATÉGORIE ---
+        c1, c2, c3 = st.columns(3)
+        categorie = c1.selectbox("Catégorie", ["Agneau (Mâle)", "Agnelle (Femelle)", "Bélier", "Brebis"])
+        dentition = c2.selectbox("Dentition", ["Dents de lait", "2 Dents", "4 Dents", "6 Dents", "8 Dents"])
+        
+        # Logique d'âge simplifiée pour le test
+        age_jours = c3.number_input("Âge (Jours)", value=70)
 
         st.markdown("---")
-
-        # --- SECTION B : LES TROIS MODES D'ÂGE ---
-        st.subheader("📅 Détermination de l'Âge")
-        c_age1, c_age2 = st.columns([1, 2])
         
-        with c_age1:
-            mode_age = st.radio("Méthode de saisie", 
-                              ["Âge exact (Jours)", "Par mois", "Par la dentition"])
-        
-        with c_age2:
-            if mode_age == "Âge exact (Jours)":
-                age_final = st.number_input("Nombre de jours exacts", min_value=0, value=70)
-            
-            elif mode_age == "Par mois":
-                nb_mois = st.number_input("Nombre de mois", min_value=0, value=2)
-                age_final = nb_mois * 30 # Conversion standard
-                st.caption(f"Équivalent à environ {age_final} jours")
-            
-            else: # Par la dentition
-                dent_ref = {
-                    "Dents de lait (< 12-14 mois)": 180,
-                    "2 Dents (14-19 mois)": 450,
-                    "4 Dents (19-24 mois)": 630,
-                    "6 Dents (24-30 mois)": 810,
-                    "8 Dents (Adulte > 30 mois)": 1095
-                }
-                choix_dent = st.selectbox("Observation des incisives", list(dent_ref.keys()))
-                age_final = dent_ref[choix_dent]
-                st.info(f"Âge biologique estimé : {age_final} jours")
-
-        st.markdown("---")
-
-        # --- SECTION C : CHRONOLOGIE DES POIDS ---
-        st.subheader("⚖️ Suivi de Croissance (kg)")
+        # --- SECTION POIDS ---
+        st.subheader("⚖️ Chronologie des Poids (kg)")
         cp1, cp2, cp3 = st.columns(3)
-        p10 = cp1.number_input("Poids à 10 jours", min_value=0.0, value=8.5, step=0.1)
-        p30 = cp2.number_input("Poids à 30 jours", min_value=0.0, value=15.0, step=0.1)
-        p70 = cp3.number_input("Poids à 70 jours", min_value=0.0, value=28.0, step=0.1)
+        p10 = cp1.number_input("Poids à 10j", value=8.5)
+        p30 = cp2.number_input("Poids à 30j", value=15.0)
+        p70 = cp3.number_input("Poids à 70j", value=28.0)
 
         st.markdown("---")
 
-        # --- SECTION D : MENSURATIONS (SCANNER) & VOLUME ---
-        st.subheader("📏 Variables de Mensuration (cm)")
-        st.caption("Données récupérées automatiquement du bloc Scanner IA")
+        # --- SECTION MENSURATIONS ---
+        st.subheader("📏 Mensurations")
         
-        cm1, cm2, cm3, cm4 = st.columns(4)
-        hg = cm1.number_input("Hauteur Garrot", value=float(scan_data.get('h_garrot', 0.0)))
-        lg = cm2.number_input("Longueur Corps", value=float(scan_data.get('l_corps', 0.0)))
-        cc = cm3.number_input("Circonférence Canon", value=float(scan_data.get('c_canon', 0.0)))
-        pt = cm4.number_input("Périmètre Thorax", value=float(scan_data.get('p_thoracique', 0.0)))
+        # On crée 5 colonnes pour aligner les mesures
+        m1, m2, m3, m4, m5 = st.columns(5)
         
-        # Calcul du volume optionnel
-        volume_est = 0.0
-        if pt > 0 and lg > 0:
-            rayon = pt / (2 * 3.14159)
-            volume_est = (3.14159 * (rayon**2) * lg) / 1000
-            st.write(f"📦 **Volume corporel estimé (Optionnel) :** {volume_est:.2f} Litres")
+        hg = m1.number_input("Garrot (cm)", value=float(scan_data.get('h_garrot', 75.0)))
+        lg = m2.number_input("Longueur (cm)", value=float(scan_data.get('l_corps', 85.0)))
+        cc = m3.number_input("Canon (cm)", value=float(scan_data.get('c_canon', 9.0)))
+        pt = m4.number_input("Thorax (cm)", value=float(scan_data.get('p_thoracique', 90.0)))
+        
+        # LOGIQUE D'AFFICHAGE DE LA CASE BASSIN
+        largeur_bassin = 0.0
+        if activer_bassin:
+            largeur_bassin = m5.number_input("Bassin (cm)", value=22.0, help="Largeur aux hanches")
+        else:
+            m5.write("❌")
+            m5.caption("Bassin désactivé")
 
-        # --- BOUTON FINAL ---
-        st.markdown("<br>", unsafe_allow_html=True)
-        if st.form_submit_button("💾 ENREGISTRER L'INDIVIDU DANS LA BASE", use_container_width=True):
-            if id_animal:
-                # Enregistrement dans st.session_state ou SQLite
-                new_entry = {
-                    "id": id_animal, "cat": categorie, "age": age_final,
-                    "p10": p10, "p30": p30, "p70": p70,
-                    "hg": hg, "lg": lg, "cc": cc, "pt": pt, "vol": volume_est
-                }
-                st.success(f"✅ Individu {id_animal} ({categorie}) enregistré !")
-                # Ici on pourra ajouter l'INSERT SQL complet
+        # --- SECTION CALCUL DU VOLUME ---
+        st.markdown("---")
+        if pt > 0 and lg > 0:
+            rayon_p = pt / (2 * 3.14159)
+            if activer_bassin and largeur_bassin > 0:
+                rayon_b = largeur_bassin / 2
+                # Formule tronc de cône
+                volume_est = (1/3) * 3.14159 * lg * (rayon_p**2 + rayon_p*rayon_b + rayon_b**2) / 1000
+                st.success(f"📦 **Volume Corporel (Précis) : {volume_est:.2f} Litres**")
             else:
-                st.error("⚠️ Veuillez saisir un identifiant.")
+                # Formule cylindre
+                volume_est = (3.14159 * (rayon_p**2) * lg) / 1000
+                st.warning(f"📦 **Volume Corporel (Standard) : {volume_est:.2f} Litres**")
+
+        # BOUTON DE VALIDATION
+        if st.form_submit_button("💾 ENREGISTRER L'INDIVIDU"):
+            if id_animal:
+                st.success(f"Animal {id_animal} sauvegardé avec succès !")
+            else:
+                st.error("L'identifiant est obligatoire.")
 # ==========================================
 # 4. BLOC ECHO-COMPOSITION (VISUALISATION)
 # ==========================================
