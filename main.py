@@ -247,23 +247,117 @@ def view_indexation():
                 st.error("⚠️ Veuillez entrer un identifiant (Boucle).")
 
 # ==========================================
-# BLOC 6 : EXPERTISE & NUTRITION
+# BLOC 6 : EXPERTISE, NUTRITION ALGÉRIE & PRÉDICTION
 # ==========================================
+
 def view_echo(df):
-    st.title("🥩 Expertise Musculaire")
+    st.title("🥩 Expertise Musculaire & Carcasse")
     if df.empty: return
-    sub = df[df['id'] == st.selectbox("Animal", df['id'].unique())].iloc[0]
-    st.metric("Surface Noix (SNC)", f"{sub['SNC']} cm²")
-    fig = go.Figure(go.Indicator(mode="gauge+number", value=sub['SNC'], title={'text': "Muscularité"}, gauge={'axis':{'range':[None,30]}}))
-    st.plotly_chart(fig)
+    
+    col1, col2 = st.columns([1, 2])
+    with col1:
+        target = st.selectbox("Sélectionner l'animal", df['id'].unique(), key="echo_sel")
+        sub = df[df['id'] == target].iloc[0]
+        st.metric("SNC (Surface Noix)", f"{sub['SNC']} cm²")
+        st.metric("Rendement Estimé", f"{sub['Rendement']}%")
+        
+    with col2:
+        fig = go.Figure(go.Indicator(
+            mode="gauge+number", 
+            value=sub['SNC'], 
+            title={'text': "Indice de Muscularité (SNC)"},
+            gauge={
+                'axis': {'range': [None, 35]},
+                'steps': [
+                    {'range': [0, 18], 'color': "lightgray"},
+                    {'range': [18, 25], 'color': "skyblue"},
+                    {'range': [25, 35], 'color': "gold"}
+                ],
+                'threshold': {'line': {'color': "red", 'width': 4}, 'value': 22}
+            }
+        ))
+        st.plotly_chart(fig, use_container_width=True)
 
 def view_nutrition(df):
-    st.title("🥗 Ration")
+    st.title("🥗 Nutritionniste Expert (Marché Algérien)")
     if df.empty: return
-    sub = df[df['id'] == st.selectbox("Animal ", df['id'].unique())].iloc[0]
-    obj = st.slider("Objectif GMD (g/j)", 100, 500, 250)
-    ufl = round((0.035 * (sub['p_actuel']**0.75)) + (obj/1000)*3.5, 2)
-    st.info(f"Besoin : {ufl} UFL/jour")
+
+    # --- 1. BASE DE DONNÉES ALIMENTS ALGÉRIE (Valeurs moyennes UFL/PDI) ---
+    aliments_dz = {
+        "Orge (Chaïr)": {"ufl": 1.0, "pdi": 75, "prix": 5500},
+        "Son de blé (Nokhala)": {"ufl": 0.85, "pdi": 90, "prix": 3500},
+        "Maïs concassé": {"ufl": 1.15, "pdi": 70, "prix": 7000},
+        "Foin de vesse-avoine": {"ufl": 0.65, "pdi": 60, "prix": 2500},
+        "Paille de blé": {"ufl": 0.35, "pdi": 30, "prix": 1200},
+        "Aliment Complet (Bétail)": {"ufl": 0.95, "pdi": 105, "prix": 6200}
+    }
+
+    sub = df[df['id'] == st.selectbox("Sélectionner un animal", df['id'].unique(), key="nut_sel")].iloc[0]
+    
+    st.sidebar.subheader("🎯 Objectif de Croissance")
+    obj_gmd = st.sidebar.slider("GMD visé (g/jour)", 100, 600, 250, step=50)
+    duree_sim = st.sidebar.number_input("Durée de la simulation (jours)", 30, 180, 60)
+
+    # --- 2. CALCUL DES BESOINS (INRA Adapté) ---
+    # Entretien + Croissance
+    besoin_ufl = (0.040 * (sub['p_actuel']**0.75)) + (obj_gmd/1000 * 3.8)
+    besoin_pdi = (sub['p_actuel'] * 0.5) + (obj_gmd * 0.4)
+
+    st.subheader(f"📊 Besoins pour {sub['id']} ({sub['p_actuel']} kg)")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Énergie (UFL)", f"{besoin_ufl:.2f}")
+    c2.metric("Protéines (PDI)", f"{besoin_pdi:.1f} g")
+    c3.metric("Poids cible", f"{sub['p_actuel'] + (obj_gmd*duree_sim/1000):.1f} kg")
+
+    # --- 3. SIMULATEUR DE RATION ---
+    st.subheader("🌾 Composition de la Ration (en kg)")
+    cols = st.columns(len(aliments_dz))
+    ration = {}
+    total_ufl = 0
+    total_pdi = 0
+    total_prix = 0
+
+    for i, (nom, val) in enumerate(aliments_dz.items()):
+        quantite = cols[i].number_input(f"{nom}", min_value=0.0, max_value=5.0, step=0.1, key=f"q_{nom}")
+        ration[nom] = quantite
+        total_ufl += quantite * val['ufl']
+        total_pdi += quantite * val['pdi']
+        total_prix += (quantite * val['prix'] / 100) # Prix par kg estimé depuis quintal
+
+    # --- 4. ANALYSE DE LA RATION ---
+    st.markdown("---")
+    res_c1, res_c2 = st.columns(2)
+    
+    with res_c1:
+        st.write("### ✅ Équilibre de la ration")
+        diff_ufl = total_ufl - besoin_ufl
+        if diff_ufl >= 0:
+            st.success(f"Énergie : +{diff_ufl:.2f} UFL (OK)")
+        else:
+            st.error(f"Énergie : {diff_ufl:.2f} UFL (Manque)")
+
+        diff_pdi = total_pdi - besoin_pdi
+        if diff_pdi >= 0:
+            st.success(f"Protéines : +{diff_pdi:.1f} g (OK)")
+        else:
+            st.error(f"Protéines : {diff_pdi:.1f} g (Manque)")
+        
+        st.info(f"💰 Coût estimé : {total_prix:.2f} DA / jour")
+
+    with res_c2:
+        st.write("### 📈 Prédiction d'évolution")
+        # Prédiction basée sur l'énergie réelle fournie
+        gmd_reel = (total_ufl - (0.040 * (sub['p_actuel']**0.75))) / 3.8 * 1000
+        poids_futur = sub['p_actuel'] + (max(0, gmd_reel) * duree_sim / 1000)
+        
+        dates = [datetime.now() + timedelta(days=x) for x in range(0, duree_sim, 5)]
+        poids_evol = [sub['p_actuel'] + (max(0, gmd_reel) * x / 1000) for x in range(0, duree_sim, 5)]
+        
+        fig_pred = px.line(x=dates, y=poids_evol, labels={'x': 'Date', 'y': 'Poids (kg)'}, title="Courbe de croissance prédite")
+        st.plotly_chart(fig_pred, use_container_width=True)
+
+    if st.button("📋 Imprimer la fiche nutritionnelle"):
+        st.write("Fonction d'impression en cours de développement...")
 
 # ==========================================
 # MAIN : NAVIGATION
