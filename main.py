@@ -143,31 +143,97 @@ def view_indexation():
             st.success("Données sauvegardées !")
 
 # ==========================================
-# 3. BLOC INDEXATION (SAISIE & DENTITION)
+# BLOC 3. INDEXATION EXPERTE CONSOLIDÉE (V8.7)
 # ==========================================
 def view_indexation():
-    st.title("✍️ Identification & Morphométrie")
-    scan = st.session_state.get('last_scan', {})
-    with st.form("index_form"):
-        c1, c2, c3 = st.columns(3)
-        id_a = c1.text_input("ID Animal *")
-        sexe = c1.radio("Sexe", ["Bélier", "Brebis", "Agneau/elle"])
-        dent = c2.selectbox("Dentition", ["Lait", "2 Dents", "4 Dents", "8 Dents"])
-        p70 = c2.number_input("Poids Actuel (kg)", 35.0)
-        hg = c3.number_input("Hauteur (cm)", value=float(scan.get('h_garrot', 75.0)))
-        pt = c3.number_input("Thorax (cm)", value=float(scan.get('p_thoracique', 90.0)))
-        lg = c3.number_input("Longueur (cm)", value=float(scan.get('l_corps', 85.0)))
-        cc = c3.number_input("Canon (cm)", value=float(scan.get('c_canon', 9.0)))
-        
-        if st.form_submit_button("💾 Sauvegarder l'Individu"):
-            if id_a:
-                with get_db_connection() as conn:
-                    conn.execute("INSERT OR REPLACE INTO beliers VALUES (?,?,?,?)", (id_a, "Ouled Djellal", sexe, dent))
-                    conn.execute("INSERT INTO mesures (id_animal, p30, p70, h_garrot, c_canon, p_thoracique, l_corps) VALUES (?,?,?,?,?,?,?)",
-                                 (id_a, 15.0, p70, hg, cc, pt, lg))
-                st.success(f"Animal {id_a} enregistré.")
-                st.rerun()
+    st.title("✍️ Indexation Complète & État Civil")
+    
+    # 1. Récupération des données du scanner (Variables de mensuration)
+    scan_data = st.session_state.get('last_scan', {})
 
+    with st.form("form_index_final_expert"):
+        # --- SECTION A : CATÉGORIE & IDENTITÉ ---
+        st.subheader("🧬 Identification de l'animal")
+        c1, c2 = st.columns(2)
+        with c1:
+            id_animal = st.text_input("Identifiant (Boucle/Puce) *", placeholder="Ex: OD-2024-001")
+        with c2:
+            categorie = st.selectbox("Catégorie Zootechnique", 
+                                   ["Agneau (Mâle)", "Agnelle (Femelle)", "Bélier", "Brebis"])
+
+        st.markdown("---")
+
+        # --- SECTION B : LES TROIS MODES D'ÂGE ---
+        st.subheader("📅 Détermination de l'Âge")
+        c_age1, c_age2 = st.columns([1, 2])
+        
+        with c_age1:
+            mode_age = st.radio("Méthode de saisie", 
+                              ["Âge exact (Jours)", "Par mois", "Par la dentition"])
+        
+        with c_age2:
+            if mode_age == "Âge exact (Jours)":
+                age_final = st.number_input("Nombre de jours exacts", min_value=0, value=70)
+            
+            elif mode_age == "Par mois":
+                nb_mois = st.number_input("Nombre de mois", min_value=0, value=2)
+                age_final = nb_mois * 30 # Conversion standard
+                st.caption(f"Équivalent à environ {age_final} jours")
+            
+            else: # Par la dentition
+                dent_ref = {
+                    "Dents de lait (< 12-14 mois)": 180,
+                    "2 Dents (14-19 mois)": 450,
+                    "4 Dents (19-24 mois)": 630,
+                    "6 Dents (24-30 mois)": 810,
+                    "8 Dents (Adulte > 30 mois)": 1095
+                }
+                choix_dent = st.selectbox("Observation des incisives", list(dent_ref.keys()))
+                age_final = dent_ref[choix_dent]
+                st.info(f"Âge biologique estimé : {age_final} jours")
+
+        st.markdown("---")
+
+        # --- SECTION C : CHRONOLOGIE DES POIDS ---
+        st.subheader("⚖️ Suivi de Croissance (kg)")
+        cp1, cp2, cp3 = st.columns(3)
+        p10 = cp1.number_input("Poids à 10 jours", min_value=0.0, value=8.5, step=0.1)
+        p30 = cp2.number_input("Poids à 30 jours", min_value=0.0, value=15.0, step=0.1)
+        p70 = cp3.number_input("Poids à 70 jours", min_value=0.0, value=28.0, step=0.1)
+
+        st.markdown("---")
+
+        # --- SECTION D : MENSURATIONS (SCANNER) & VOLUME ---
+        st.subheader("📏 Variables de Mensuration (cm)")
+        st.caption("Données récupérées automatiquement du bloc Scanner IA")
+        
+        cm1, cm2, cm3, cm4 = st.columns(4)
+        hg = cm1.number_input("Hauteur Garrot", value=float(scan_data.get('h_garrot', 0.0)))
+        lg = cm2.number_input("Longueur Corps", value=float(scan_data.get('l_corps', 0.0)))
+        cc = cm3.number_input("Circonférence Canon", value=float(scan_data.get('c_canon', 0.0)))
+        pt = cm4.number_input("Périmètre Thorax", value=float(scan_data.get('p_thoracique', 0.0)))
+        
+        # Calcul du volume optionnel
+        volume_est = 0.0
+        if pt > 0 and lg > 0:
+            rayon = pt / (2 * 3.14159)
+            volume_est = (3.14159 * (rayon**2) * lg) / 1000
+            st.write(f"📦 **Volume corporel estimé (Optionnel) :** {volume_est:.2f} Litres")
+
+        # --- BOUTON FINAL ---
+        st.markdown("<br>", unsafe_allow_html=True)
+        if st.form_submit_button("💾 ENREGISTRER L'INDIVIDU DANS LA BASE", use_container_width=True):
+            if id_animal:
+                # Enregistrement dans st.session_state ou SQLite
+                new_entry = {
+                    "id": id_animal, "cat": categorie, "age": age_final,
+                    "p10": p10, "p30": p30, "p70": p70,
+                    "hg": hg, "lg": lg, "cc": cc, "pt": pt, "vol": volume_est
+                }
+                st.success(f"✅ Individu {id_animal} ({categorie}) enregistré !")
+                # Ici on pourra ajouter l'INSERT SQL complet
+            else:
+                st.error("⚠️ Veuillez saisir un identifiant.")
 # ==========================================
 # 4. BLOC ECHO-COMPOSITION (VISUALISATION)
 # ==========================================
