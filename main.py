@@ -58,57 +58,77 @@ def seed_data():
                              VALUES (?,?,?,?,?,?,?,?,?)""", mesures)
 
 # ==========================================
-# BLOC 2 : MOTEUR DE CALCULS EXPERTS (V21 - ÂGE & CANON)
+# BLOC 2 : MOTEUR DE CALCULS EXPERTS (V21 - MULTI-RACES, ÂGE & CANON)
 # ==========================================
 def moteur_calcul_expert(row):
     """
-    Moteur de calcul optimisé :
-    - Intègre la circonférence du canon (CC) pour la précision de l'os.
-    - Utilise l'âge pour ajuster l'engraissement.
-    - Conserve la structure de sécurité pour éviter les valeurs négatives.
+    Moteur de calcul optimisé pour les races Algériennes :
+    - Intègre le coefficient de proportionnalité (K) par race.
+    - Utilise le Canon (CC) et l'Âge pour la précision tissulaire.
+    - Sécurité mathématique pour éviter les valeurs négatives.
     """
     res = {'Muscle': 0.0, 'Gras': 0.0, 'Os': 0.0, 'GMD': 0, 'Volume': 0.0, 'Rendement': 0.0, 'SNC': 0.0, 'jours_depuis_pesee': 0}
     try:
-        # Extraction des données de base
-        p_act, p_bas = float(row.get('p_actuel') or 0), float(row.get('p_base') or 0)
-        hg, lg, pt = float(row.get('h_garrot') or 0), float(row.get('l_corps') or 0), float(row.get('p_thoracique') or 0)
-        cc, bas = float(row.get('c_canon') or 9.0), float(row.get('bassin') or 0)
+        # 1. Extraction des données de base
+        p_act = float(row.get('p_actuel') or 0)
+        p_bas = float(row.get('p_base') or 0)
+        hg = float(row.get('h_garrot') or 0)
+        lg = float(row.get('l_corps') or 0)
+        pt = float(row.get('p_thoracique') or 0)
+        cc = float(row.get('c_canon') or 9.0)
+        bas = float(row.get('bassin') or 0)
         sexe = row.get('sexe', 'Bélier')
-        age_mois = float(row.get('age_mois') or 12) # Valeur par défaut 12 mois
+        age_mois = float(row.get('age_mois') or 12)
+        race = row.get('race', 'Non Identifié')
 
-        # Calcul de l'ancienneté de la pesée
+        # 2. Dictionnaire des Coefficients de Proportionnalité (K) par Race
+        coefficients_races = {
+            'Ouled Djellal': 120,
+            'Rembi': 115,
+            'Hamra': 105,
+            'Sidaoun': 110,
+            'Tazegzawt': 112,
+            'Croisé': 114,
+            'Non Identifié': 116
+        }
+        K = coefficients_races.get(race, 116)
+
+        # 3. Calcul de l'ancienneté et performance
         if row['date_mesure']:
             last_date = datetime.strptime(row['date_mesure'], '%Y-%m-%d').date()
             res['jours_depuis_pesee'] = (datetime.now().date() - last_date).days
 
-        # Performance : GMD, Volume et SNC
-        if p_act > p_bas > 0: res['GMD'] = round(((p_act - p_bas) / 30) * 1000)
+        if p_act > p_bas > 0: 
+            res['GMD'] = round(((p_act - p_bas) / 30) * 1000)
+        
         rayon = pt / (2 * np.pi)
         res['Volume'] = round(np.pi * (rayon**2) * lg, 1)
         res['SNC'] = round(((res['Volume']/lg if lg>0 else 0) * 0.015) + (bas * 0.4), 2)
         
-        # --- LOGIQUE TISSULAIRE PRÉCISE ---
+        # --- 4. LOGIQUE TISSULAIRE PRÉCISE ---
         ic = (pt / (cc * hg)) * 1000 if cc > 0 else 0
         
-        # 1. Calcul de l'OS (Basé sur le Canon)
-        # Plus le canon est large par rapport au garrot, plus la carcasse est osseuse
-        os_base = (cc / hg) * 120 
-        if age_mois < 6: os_base += 2.0 # Les jeunes ont un squelette proportionnellement plus lourd
-        res['Os'] = round(np.clip(os_base, 11.0, 18.0), 1)
+        # A. Calcul de l'OS (Basé sur le Canon et la Race)
+        os_base = (cc / hg) * K
+        if age_mois < 6: os_base += 2.0
+        res['Os'] = round(np.clip(os_base, 10.0, 18.0), 1)
 
-        # 2. Calcul du GRAS (Ajusté par le Sexe et l'Âge)
+        # B. Calcul du GRAS (Ajusté par Sexe, Âge et Indice de Compacité)
         coeff_age_gras = 1.0 + (min(age_mois, 24) * 0.01) 
-        coeff_sexe_gras = 1.15 if sexe in ["Brebis", "Agnelle"] else 1.0
+        coeff_sexe_gras = 1.18 if sexe in ["Brebis", "Agnelle"] else 1.0
         
         gras_est = (4.0 + ((1.2 + p_act*0.12 + ic*0.05 - hg*0.02) * 1.6)) * coeff_sexe_gras * coeff_age_gras
-        res['Gras'] = round(np.clip(gras_est, 7.0, 30.0), 1)
+        res['Gras'] = round(np.clip(gras_est, 7.0, 32.0), 1)
 
-        # 3. Calcul du MUSCLE (Reliquat sécurisé)
-        # Le muscle occupe l'espace restant pour garantir 100% de la carcasse
-        res['Muscle'] = round(100.0 - res['Gras'] - res['Os'], 1)
+        # C. Calcul du MUSCLE (Reliquat sécurisé pour 100% de la carcasse)
+        # Empêche toute valeur négative en déduisant le reste
+        res['Muscle'] = round(max(40.0, 100.0 - res['Gras'] - res['Os']), 1)
         
-        # 4. RENDEMENT (Ajusté par la finesse de l'os)
-        # Un canon fin (CC faible) augmente mécaniquement le rendement carcasse
+        # Ajustement final si le total dépasse 100 (sécurité rare)
+        if (res['Muscle'] + res['Gras'] + res['Os']) > 100.0:
+            res['Muscle'] = round(100.0 - res['Gras'] - res['Os'], 1)
+
+        # 5. RENDEMENT (Pénalisé par le poids de l'os CC)
         res['Rendement'] = round(40 + (res['Muscle'] * 0.15) - (cc * 0.2), 1)
 
         return pd.Series(res)
@@ -118,7 +138,6 @@ def moteur_calcul_expert(row):
 def load_data():
     init_db()
     with get_db_connection() as conn:
-        # La jointure récupère toutes les colonnes, incluant 'sexe' et 'age_mois'
         query = """SELECT b.*, m.p_base, m.p_actuel, m.h_garrot, m.l_corps, m.p_thoracique, m.c_canon, m.bassin, m.date_mesure 
                    FROM beliers b 
                    LEFT JOIN (SELECT id_animal, MAX(id) as last_id FROM mesures GROUP BY id_animal) last_m ON b.id = last_m.id_animal 
