@@ -104,13 +104,7 @@ def view_indexation():
     st.info("💡 Sélectionnez la méthode de saisie de l'âge puis remplissez les mensurations.")
 
     with st.form("form_index_final"):
-        # --- SECTION IDENTITÉ & ÂGE ---
-        st.subheader("🆔 Identification & Chronologie")
-        col_id1, col_id2 = st.columns([2, 1])
-        id_animal = col_id1.text_input("N° Identifiant (Boucle) *")
-        categorie = col_id2.selectbox("Catégorie", ["Agneau", "Agnelle", "Bélier", "Brebis"])
-        
-        # --- SÉLECTEUR DE MÉTHODE D'ÂGE ---
+        # --- SÉLECTEUR DE MÉTHODE D'ÂGE (PARTIE CORRIGÉE) ---
         st.markdown("##### ⏳ Détermination de l'âge")
         methode_age = st.radio(
             "Choisir la méthode :",
@@ -118,10 +112,9 @@ def view_indexation():
             horizontal=True
         )
         
-        # Logique de détermination dynamique
         if methode_age == "Par Dentition":
             dentition = st.selectbox("Nombre de dents", ["Dents de lait", "2 Dents", "4 Dents", "6 Dents", "8 Dents"])
-            age_jours = 70  # Valeur pivot
+            age_jours = 70  # Valeur par défaut
         elif methode_age == "Âge Exact (Jours)":
             age_jours = st.number_input("Entrez le nombre de jours", value=70, min_value=1)
             dentition = "Saisie jours"
@@ -129,8 +122,6 @@ def view_indexation():
             age_mois = st.number_input("Entrez le nombre de mois", value=2, min_value=1)
             age_jours = age_mois * 30
             dentition = f"Est. {age_mois} mois"
-
-        st.markdown("---")
         
         # --- SECTION POIDS ---
         st.subheader("⚖️ Chronologie des Poids (kg)")
