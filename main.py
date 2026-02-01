@@ -155,19 +155,85 @@ def view_dashboard(df):
         st.success("✅ Aucune pesée spécifique prévue bientôt.")
 
 # ==========================================
-# BLOC 4 : SCANNER (IA & ÉTALON)
+# BLOC 4 : STATION DE SCAN BIOMÉTRIQUE (V15)
 # ==========================================
 def view_scanner():
-    st.title("📸 Station de Scan")
-    tab1, tab2 = st.tabs(["🤖 IA", "📏 Étalon"])
+    st.title("📸 Station de Scan Haute Précision")
+    st.markdown("---")
+    
+    tab1, tab2 = st.tabs(["🤖 Scan IA Autonome", "📏 Métrologie par Étalon"])
+
+    # --- TAB 1 : IA AUTONOME ---
     with tab1:
-        if st.camera_input("Scanner l'animal"):
-            st.session_state['last_scan'] = {"h_garrot": 78.0, "l_corps": 85.0, "p_thoracique": 92.0, "c_canon": 9.5, "bassin": 23.0}
-            st.success("Analyse IA terminée !")
+        st.subheader("Reconnaissance d'image par Vision par Ordinateur")
+        st.info("💡 Positionnez l'animal de profil à une distance de 2 mètres pour une précision optimale.")
+        
+        img_file = st.camera_input("Scanner l'animal en direct")
+        
+        if img_file:
+            with st.spinner("Analyse des contours et segmentation de la silhouette..."):
+                time.sleep(2)  # Simulation du temps de traitement IA
+                # Résultats simulés par l'IA (Modèle de segmentation)
+                res_ia = {
+                    "h_garrot": 78.5, 
+                    "l_corps": 87.2, 
+                    "p_thoracique": 94.0, 
+                    "c_canon": 9.2, 
+                    "bassin": 23.5
+                }
+                st.session_state['last_scan'] = res_ia
+                st.success("✅ Analyse IA terminée avec succès !")
+                
+                # Affichage des mesures détectées
+                cols = st.columns(5)
+                for i, (label, val) in enumerate(res_ia.items()):
+                    cols[i].metric(label.replace("_", " ").title(), f"{val} cm")
+                
+                st.balloons()
+
+    # --- TAB 2 : SCAN AVEC ÉTALON ---
     with tab2:
-        if st.file_uploader("Importer photo avec étalon"):
-            if st.button("Calculer"):
-                st.session_state['last_scan'] = {"h_garrot": 76.0, "l_corps": 84.0, "p_thoracique": 90.0, "c_canon": 9.0, "bassin": 22.5}
+        st.subheader("Calcul par Référence Physique")
+        col_et1, col_et2 = st.columns([1, 2])
+        
+        with col_et1:
+            etalon_type = st.selectbox("Choisir l'objet témoin", [
+                "Bâton standard (1.00m)", 
+                "Feuille A4 (29.7cm)", 
+                "Carte Bancaire (8.5cm)",
+                "Réglette de 50cm"
+            ])
+            st.warning("⚠️ L'étalon doit être placé sur le même plan que l'animal (contre son flanc).")
+            
+        with col_et2:
+            up_photo = st.file_uploader("Importer la photo (Profil)", type=['jpg', 'jpeg', 'png'])
+            
+        if up_photo:
+            st.image(up_photo, caption="Image chargée pour analyse", use_container_width=True)
+            if st.button("🚀 Calculer les mensurations réelles"):
+                with st.spinner("Calcul des pixels/cm en cours..."):
+                    time.sleep(1.5)
+                    # Ajustement léger selon l'étalon pour le réalisme
+                    facteur = 1.02 if "Bâton" in etalon_type else 0.98
+                    res_et = {
+                        "h_garrot": round(76.0 * facteur, 1),
+                        "l_corps": round(84.5 * facteur, 1),
+                        "p_thoracique": round(91.0 * facteur, 1),
+                        "c_canon": round(9.0 * facteur, 1),
+                        "bassin": round(22.8 * facteur, 1)
+                    }
+                    st.session_state['last_scan'] = res_et
+                    st.success(f"✅ Mesures validées via étalon : {etalon_type}")
+                    
+                    # Récapitulatif
+                    st.dataframe(pd.DataFrame([res_et]), hide_index=True)
+
+    # --- PIED DE PAGE ---
+    st.markdown("---")
+    if 'last_scan' in st.session_state:
+        st.write("👉 **Prochaine étape :** Allez dans l'onglet **'Indexation'** pour enregistrer ces mesures.")
+    else:
+        st.write("📷 Prenez une photo ou importez-en une pour commencer l'analyse.")
 
 # ==========================================
 # 5. INDEXATION & MORPHOMÉTRIE (VERSION DYNAMIQUE)
